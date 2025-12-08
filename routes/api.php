@@ -1,0 +1,106 @@
+<?php
+
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\DiscountCouponController;
+use App\Http\Controllers\AboutUsController;
+use App\Http\Controllers\ReturnsPolicyController;
+use App\Http\Controllers\PrivacyPolicyController;
+use App\Http\Controllers\ShippingInfoController;
+use App\Http\Controllers\StoreInfoController;
+use App\Http\Controllers\ContactUsController;
+use App\Http\Controllers\BannerController;
+use App\Http\Controllers\OfferBannerController;
+use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\BrandController;
+use App\Http\Controllers\TestimonialController;
+use App\Http\Controllers\ProductController;
+use App\Http\Controllers\ProductReviewController;
+use App\Http\Controllers\AuthController;
+use App\Http\Controllers\OrderController;
+use App\Http\Controllers\PaymentController;
+use App\Http\Controllers\ServiceController;
+
+// ... داخل web.php
+Route::resource('services', ServiceController::class);
+
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post('/logout', [AuthController::class, 'logout']);
+    Route::post('/update-profile', [AuthController::class, 'updateProfile']);
+    Route::put('/change-password', [AuthController::class, 'changePassword']);
+
+
+});
+
+// Auth routes
+Route::post('login', [AuthController::class, 'login']);
+Route::post('register', [AuthController::class, 'register']);
+Route::middleware('auth:sanctum')->post('logout', [AuthController::class, 'logout']);
+
+// Public (index, show only)
+Route::apiResource('discount-coupons', DiscountCouponController::class)->only(['index', 'show']);
+Route::apiResource('about-us', AboutUsController::class)->only(['index', 'show']);
+Route::apiResource('returns-policy', ReturnsPolicyController::class)->only(['index', 'show']);
+Route::apiResource('privacy-policy', PrivacyPolicyController::class)->only(['index', 'show']);
+Route::apiResource('shipping-info', ShippingInfoController::class)->only(['index', 'show']);
+Route::apiResource('store-info', StoreInfoController::class)->only(['index', 'show']);
+Route::apiResource('contact-us', ContactUsController::class)->only(['index', 'store','show']);
+Route::apiResource('banners', BannerController::class)->only(['index', 'show']);
+Route::apiResource('offer-banners', OfferBannerController::class)->only(['index', 'show']);
+Route::apiResource('categories', CategoryController::class)->only(['index', 'show']);
+Route::apiResource('brands', BrandController::class)->only(['index', 'show']);
+Route::apiResource('testimonials', TestimonialController::class)->only(['index', 'show']);
+Route::apiResource('products', ProductController::class)->only(['index', 'show']);
+Route::apiResource('product-reviews', ProductReviewController::class)->only(['index', 'show', 'store']);
+
+// Protected routes (only auth, no admin)
+Route::middleware('auth:sanctum')->group(function () {
+    Route::apiResource('discount-coupons', DiscountCouponController::class)->except(['index', 'show']);
+    Route::apiResource('about-us', AboutUsController::class)->except(['index', 'show']);
+    Route::post('about-us/{id}', [AboutUsController::class, 'update']);
+    Route::apiResource('returns-policy', ReturnsPolicyController::class)->except(['index', 'show']);
+    Route::apiResource('privacy-policy', PrivacyPolicyController::class)->except(['index', 'show']);
+    Route::apiResource('shipping-info', ShippingInfoController::class)->except(['index', 'show']);
+    Route::apiResource('store-info', StoreInfoController::class)->except(['index', 'show']);
+    Route::apiResource('contact-us', ContactUsController::class)->except(['index','store', 'show']);
+    Route::apiResource('banners', BannerController::class)->except(['index', 'show']);
+    Route::apiResource('offer-banners', OfferBannerController::class)->except(['index', 'show']);
+    Route::apiResource('categories', CategoryController::class)->except(['index', 'show']);
+    Route::apiResource('brands', BrandController::class)->except(['index', 'show']);
+    Route::apiResource('testimonials', TestimonialController::class)->except(['index', 'show']);
+    Route::apiResource('products', ProductController::class)->except(['index', 'show']);
+Route::delete('product-reviews/{id}', [ProductReviewController::class, 'destroy']);
+    Route::post('store-info/{id}', [StoreInfoController::class, 'update']);
+     Route::post('banners/{id}', [BannerController::class, 'update']);
+   Route::post('brands/{id}', [BrandController::class, 'update']);
+
+ Route::post('/products/update/{id}', [ProductController::class, 'update']);
+  Route::post('/offer-banners/update/{id}', [OfferBannerController::class, 'update']);
+    Route::post('/categories/update/{id}', [CategoryController::class, 'update']);
+
+});
+
+Route::post('/pay', [PaymentController::class, 'pay']);
+
+
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post('/orders', [OrderController::class, 'store']);
+    Route::get('/orders', [OrderController::class, 'myOrders']);
+    Route::get('/orders/{id}', [OrderController::class, 'show']);
+    Route::delete('categories/{id}/banner', [CategoryController::class, 'deleteBanner']);
+    Route::put('/orders/{id}', [OrderController::class, 'update']);
+});
+  Route::get('/ordersall', [OrderController::class, 'index']); // all orders
+
+Route::middleware(['auth:sanctum'])->group(function () {
+       Route::post('/offer-banners/create-for-all', [OfferBannerController::class, 'createOfferForAllProducts']);
+
+});
+
+Route::get('/offer-banners/all-products', [OfferBannerController::class, 'getOffersForAllProducts']);
+Route::middleware('auth:sanctum')->post('/offer-banners/delete-for-all', [OfferBannerController::class, 'deleteOffersForAllProducts']);
+
+
+
+
+
+
