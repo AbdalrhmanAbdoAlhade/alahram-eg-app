@@ -9,14 +9,22 @@ use Illuminate\Support\Facades\Auth;
 class DiscountCouponController extends Controller
 {
     // دالة خاصة للتحقق من صلاحية المستخدم
-    protected function checkAdmin()
-    {
-        $user = Auth::user();
+protected function checkAdmin()
+{
+    $user = Auth::user();
 
-        if (!$user || $user->role !== 'admin') {
-            abort(403, 'Unauthorized: Admins only');
-        }
+    // لو المستخدم غير مسجل دخول
+    if (!$user) {
+        abort(403, 'غير مصرح لك: يجب تسجيل الدخول');
     }
+
+    // الأدوار المسموح لها
+    $allowedRoles = ['admin', 'director', 'employee'];
+
+    if (!in_array($user->role, $allowedRoles)) {
+        abort(403, 'غير مصرح لك: يجب أن تكون أدمن أو مدير أو موظف');
+    }
+}
 
     public function index()
     {

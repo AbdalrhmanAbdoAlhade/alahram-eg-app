@@ -9,14 +9,15 @@ use Illuminate\Support\Facades\Auth;
 
 class ShippingInfoController extends Controller
 {
-    protected function checkAdmin()
-    {
-        $user = Auth::user();
+protected function checkAdmin()
+{
+    $user = Auth::user();
 
-        if (!$user || $user->role !== 'admin') {
-            abort(403, 'Unauthorized: Admins only');
-        }
+    if (!$user || !in_array($user->role, ['admin', 'director', 'employee'])) {
+        abort(403, 'Unauthorized: Admins, Directors or Employees only');
     }
+}
+
 
     public function index()
     {

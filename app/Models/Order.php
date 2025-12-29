@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class Order extends Model
 {
-   protected $fillable = [
+protected $fillable = [
     'user_id',
     'total_price',
     'status',
@@ -14,6 +14,20 @@ class Order extends Model
     'address',
     'discount_coupon_id',
     'discount_amount',
+    'name',
+    'phone',
+    'email',
+    'city',
+    'delivery_area_id',
+    'shipping_cost',    
+    'paymob_order_id',
+    'payment_token',
+    'products',
+    'coupon_code',
+    'payment_id',
+    'vat_amount',
+    'vat_percentage',
+   'country',
 ];
 
 
@@ -27,6 +41,10 @@ class Order extends Model
         return $this->belongsTo(User::class);
     }
 
+public function deliveryArea()
+{
+    return $this->belongsTo(DeliveryArea::class);
+}
 
 
 public function coupon()

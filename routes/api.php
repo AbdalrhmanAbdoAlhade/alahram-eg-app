@@ -16,19 +16,49 @@ use App\Http\Controllers\TestimonialController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\ProductReviewController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\IframeController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\PaymentController;
+use App\Http\Controllers\DeliveryAreaController;
+use App\Http\Controllers\SettingController;
+use Illuminate\Support\Facades\Mail;
+use App\Http\Controllers\MailController;
+use App\Http\Controllers\UserNotificationController;
 use App\Http\Controllers\ServiceController;
 
-// ... داخل web.php
-Route::resource('services', ServiceController::class);
 
+
+
+// خارج الميدل وير (للزوار)
+Route::get('services', [ServiceController::class, 'index']);
+Route::get('services/{id}', [ServiceController::class, 'show']);
+
+// داخل الميدل وير (للمشرفين)
+Route::middleware('auth:sanctum')->group(function () {
+    // استخدم {id} بدلاً من {service} لتطابق الكنترولر
+    Route::post('services/{id}', [ServiceController::class, 'update']); 
+    Route::post('services', [ServiceController::class, 'store']);
+    Route::delete('services/{id}', [ServiceController::class, 'destroy']);
+});
+// Public route
+Route::get('delivery-areas', [DeliveryAreaController::class, 'index']);
+
+// Protected routes
+Route::middleware('auth:sanctum')->group(function () {
+    Route::apiResource('delivery-areas', DeliveryAreaController::class)->except(['index']);
+    
+    Route::post('settings/update', [SettingController::class, 'update']);
+});
+
+Route::post('verify-otp', [AuthController::class, 'verifyOtp']);
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::post('/update-profile', [AuthController::class, 'updateProfile']);
     Route::put('/change-password', [AuthController::class, 'changePassword']);
-
-
+      Route::post('admin/create-user', [AuthController::class, 'createUserByAdmin']);
+        Route::post('admin/update-user/{id}', [AuthController::class, 'updateUserByAdmin']);
+        Route::delete('admin/delete-user/{id}', [AuthController::class, 'deleteUserByAdmin']);
+        Route::get('admin/users', [AuthController::class, 'getAllUsers']);
 });
 
 // Auth routes
@@ -72,7 +102,7 @@ Route::delete('product-reviews/{id}', [ProductReviewController::class, 'destroy'
     Route::post('store-info/{id}', [StoreInfoController::class, 'update']);
      Route::post('banners/{id}', [BannerController::class, 'update']);
    Route::post('brands/{id}', [BrandController::class, 'update']);
-
+   Route::post('/iframes', [IframeController::class, 'update']);
  Route::post('/products/update/{id}', [ProductController::class, 'update']);
   Route::post('/offer-banners/update/{id}', [OfferBannerController::class, 'update']);
     Route::post('/categories/update/{id}', [CategoryController::class, 'update']);
@@ -81,11 +111,12 @@ Route::delete('product-reviews/{id}', [ProductReviewController::class, 'destroy'
 
 Route::post('/pay', [PaymentController::class, 'pay']);
 
-
-Route::middleware('auth:sanctum')->group(function () {
-    Route::post('/orders', [OrderController::class, 'store']);
-    Route::get('/orders', [OrderController::class, 'myOrders']);
+     
     Route::get('/orders/{id}', [OrderController::class, 'show']);
+      Route::post('/orders', [OrderController::class, 'store']);
+Route::middleware('auth:sanctum')->group(function () {
+ Route::get('/orders', [OrderController::class, 'index']);
+
     Route::delete('categories/{id}/banner', [CategoryController::class, 'deleteBanner']);
     Route::put('/orders/{id}', [OrderController::class, 'update']);
 });
@@ -93,14 +124,31 @@ Route::middleware('auth:sanctum')->group(function () {
 
 Route::middleware(['auth:sanctum'])->group(function () {
        Route::post('/offer-banners/create-for-all', [OfferBannerController::class, 'createOfferForAllProducts']);
-
+  
 });
 
 Route::get('/offer-banners/all-products', [OfferBannerController::class, 'getOffersForAllProducts']);
 Route::middleware('auth:sanctum')->post('/offer-banners/delete-for-all', [OfferBannerController::class, 'deleteOffersForAllProducts']);
 
 
+Route::get('/iframes', [IframeController::class, 'index']);
+
+
+Route::post('/payments/{id}', [PaymentController::class, 'updateStatus']);
+Route::get('/payments', [PaymentController::class, 'index']);
 
 
 
 
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('notifications/unread-count', [UserNotificationController::class, 'unreadCount']);
+    Route::post('notifications/mark-all-read', [UserNotificationController::class, 'markAllRead']);
+    Route::post('notifications/{id}/mark-read', [UserNotificationController::class, 'markRead']);
+    Route::apiResource('notifications', UserNotificationController::class)->except(['create', 'edit']);
+    Route::get('admin/notifications', [UserNotificationController::class, 'adminIndex']);
+
+});
+
+
+
+Route::middleware('auth:sanctum')->post('/send-mail', [MailController::class, 'sendMail']);

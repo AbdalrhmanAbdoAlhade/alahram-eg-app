@@ -10,15 +10,14 @@ use Illuminate\Support\Facades\Storage;
 class AboutUsController extends Controller
 {
     // دالة خاصة للتحقق من صلاحية المستخدم (مدير فقط)
-    protected function checkAdmin()
-    {
-        $user = Auth::user();
+protected function checkAdmin()
+{
+    $user = Auth::user();
 
-        if (!$user || $user->role !== 'admin') {
-            abort(403, 'Unauthorized: Admins only');
-        }
+    if (!$user || !in_array($user->role, ['admin', 'director', 'employee'])) {
+        abort(403, 'Unauthorized: Admins, Directors or Employees only');
     }
-
+}
     // عرض كل البيانات
     public function index()
     {

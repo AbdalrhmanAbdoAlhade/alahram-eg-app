@@ -7,45 +7,52 @@ use App\Models\Brand;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Cache;
 
 class BrandController extends Controller
 {
-    protected function checkAdmin()
-    {
-        $user = Auth::user();
+protected function checkAdmin()
+{
+    $user = Auth::user();
 
-        if (!$user || $user->role !== 'admin') {
-            abort(403, 'Unauthorized: Admins only');
-        }
+    // لو المستخدم غير مسجل دخول
+    if (!$user) {
+        abort(403, 'غير مصرح لك: يجب تسجيل الدخول');
     }
 
-    public function index()
-    {
-        $brands = Brand::all();
+    // الأدوار المسموح لها
+    $allowedRoles = ['admin', 'director', 'employee'];
 
-        // تعديل لإظهار رابط الصورة كامل
-$brands->transform(function ($brand) {
-if ($brand->img) {
-    $brand->img = url($brand->img);
+    if (!in_array($user->role, $allowedRoles)) {
+        abort(403, 'غير مصرح لك: يجب أن تكون أدمن أو مدير أو موظف');
+    }
 }
 
-    return $brand;
-});
+public function index()
+{
+    // 🧠 تخزين جميع البراندات في الكاش لمدة 10 دقائق
+    $brands = Cache::remember('brands_all', 600, function () {
+        return Brand::all()->map(function ($brand) {
+            $brand->img = $brand->img ? url($brand->img) : null;
+            return $brand;
+        });
+    });
 
+    return response()->json($brands);
+}
 
-        return response()->json($brands);
-    }
+public function show($id)
+{
+    // 🧠 كاش لكل براند على حدة
+    $brand = Cache::remember("brand_{$id}", 600, function () use ($id) {
+        $b = Brand::findOrFail($id);
+        $b->img = $b->img ? url($b->img) : null;
+        return $b;
+    });
 
-    public function show($id)
-    {
-        $brand = Brand::findOrFail($id);
+    return response()->json($brand);
+}
 
-        if ($brand->img) {
-            $brand->img = url('storage/' . $brand->img);
-        }
-
-        return response()->json($brand);
-    }
 
     public function store(Request $request)
     {
@@ -71,6 +78,8 @@ if ($brand->img) {
      if ($brand->img) {
     $brand->img = url($brand->img);
 }
+    // 🧹 تنظيف الكاش بعد الإضافة
+        Cache::forget('brands_all');
 
 
             return response()->json([
@@ -118,7 +127,9 @@ if ($brand->img) {
       if ($brand->img) {
     $brand->img = url($brand->img);
 }
-
+        // 🧹 تنظيف الكاش بعد التحديث
+        Cache::forget('brands_all');
+        Cache::forget("brand_{$brand->id}");
 
             return response()->json([
                 'message' => 'Brand updated successfully',
@@ -143,7 +154,9 @@ if ($brand->img) {
             }
 
             $brand->delete();
-
+        // 🧹 تنظيف الكاش بعد التحديث
+        Cache::forget('brands_all');
+        Cache::forget("brand_{$brand->id}");
             return response()->json(['message' => 'Brand deleted successfully']);
         } catch (\Exception $e) {
             return response()->json(['error' => 'حدث خطأ أثناء حذف العلامة التجارية.', 'message' => $e->getMessage()], 500);

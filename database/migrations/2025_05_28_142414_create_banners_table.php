@@ -16,6 +16,8 @@ Schema::create('banners', function (Blueprint $table) {
     $table->string('img');
     $table->string('title');
     $table->text('description')->nullable();
+        $table->string('title_en');
+    $table->text('description_en')->nullable();
     $table->unsignedBigInteger('category_id')->nullable();
     $table->unsignedBigInteger('product_id')->nullable();
     $table->timestamps();

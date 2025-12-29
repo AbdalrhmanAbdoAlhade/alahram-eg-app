@@ -13,16 +13,18 @@ class StoreInfo extends Model
         'description',
         'logo',
         'footer_text',
-        'phone',
-         'Shipping_number',
+        'phone_ar',
+        'phone_eg',
+        'Shipping_number',
         'email',
         'address',
-        'facebook',
-        'twitter',
-        'instagram',
-        'youtube',
-        'whatsapp',
+        'social_media', // ✅ أضفنا هذا الحقل الجديد
         'seo_description',
         'seo_keywords',
+    ];
+
+    // ✅ نحول الـ social_media تلقائيًا إلى array
+    protected $casts = [
+        'social_media' => 'array',
     ];
 }

@@ -16,7 +16,9 @@ Schema::create('categories', function (Blueprint $table) {
     $table->string('img');
     $table->string('banner')->nullable();
     $table->string('name');
+     $table->string('name_en');
     $table->text('description')->nullable();
+    $table->text('description_en')->nullable();
     $table->boolean('banner_status')->default(true);
     $table->timestamps();
 });

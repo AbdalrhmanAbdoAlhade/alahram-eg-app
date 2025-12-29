@@ -4,107 +4,195 @@ namespace App\Http\Controllers;
 
 use App\Models\Service;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Facades\Storage; // لإدارة الملفات (الصورة)
+use Illuminate\Support\Facades\Cache;
 
 class ServiceController extends Controller
 {
+    // حماية الوصول فقط للمسؤولين
+protected function checkAdmin()
+{
+    $user = Auth::user();
+
+    // إذا لم يجد مستخدم، سنعيد رسالة واضحة مع JSON
+    if (!$user) {
+        response()->json([
+            'message' => 'Token is invalid or not received',
+            'debug_header' => request()->header('Authorization')
+        ], 401)->send();
+        exit;
+    }
+
+    if (!in_array($user->role, ['admin', 'director', 'employee'])) {
+        response()->json([
+            'message' => 'Role mismatch',
+            'your_role' => $user->role
+        ], 403)->send();
+        exit;
+    }
+}
+
+
     /**
-     * عرض قائمة بجميع الخدمات.
+     * عرض قائمة بجميع الخدمات مع الكاش.
      */
     public function index()
     {
-        // جلب جميع الخدمات وعرضها بترتيب تنازلي حسب تاريخ الإنشاء
-        $services = Service::orderBy('created_at', 'desc')->paginate(10);
+        $services = Cache::remember('services_all', 600, function () {
+            return Service::orderBy('created_at', 'desc')->get();
+        });
 
-        // هنا يجب أن تعيد عرض (View) يحتوي على البيانات
-        return view('services.index', compact('services'));
+        return response()->json([
+            'status' => true,
+            'message' => 'Services fetched successfully',
+            'data' => $services
+        ], 200);
     }
 
     /**
-     * عرض نموذج إنشاء خدمة جديدة.
-     */
-    public function create()
-    {
-        return view('services.create');
-    }
-
-    /**
-     * تخزين خدمة جديدة في قاعدة البيانات.
+     * إنشاء خدمة جديدة مع رفع الصور في public_path.
      */
     public function store(Request $request)
     {
-        // 1. التحقق من صحة البيانات المدخلة
-        $request->validate([
-            'name' => 'required|string|max:255',
+        $this->checkAdmin();
+
+        $validator = Validator::make($request->all(), [
+            'name'        => 'required|string|max:255',
             'description' => 'nullable|string',
-            // يجب تحديد نوع الملف (صورة) والحد الأقصى لحجمه
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
+            'image'       => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
+            'is_active'   => 'nullable|boolean',
         ]);
 
-        $imagePath = null;
+        if ($validator->fails()) {
+            return response()->json($validator->errors(), 422);
+        }
 
-        // 2. معالجة رفع الصورة وتخزينها
+        $imgPath = null;
+
+        // رفع الصورة باستخدام الطريقة اليدوية (مثل البرودكت)
         if ($request->hasFile('image')) {
-            // تخزين الملف في مجلد 'public/images/services' (يجب أن يكون لديك Symlink)
-            $imagePath = $request->file('image')->store('images/services', 'public');
+            $file = $request->file('image');
+            $fileNameOriginal = $file->getClientOriginalName();
+            $fileNameClean = preg_replace('/[^A-Za-z0-9\-_\.]/', '_', $fileNameOriginal);
+            $fileName = time() . '_' . $fileNameClean;
+
+            $destinationPath = public_path('services');
+            if (!file_exists($destinationPath)) {
+                mkdir($destinationPath, 0755, true);
+            }
+
+            $file->move($destinationPath, $fileName);
+            $imgPath = 'services/' . $fileName;
         }
 
-        // 3. إنشاء سجل الخدمة في قاعدة البيانات
-        Service::create([
-            'name' => $request->name,
+        $service = Service::create([
+            'name'        => $request->name,
             'description' => $request->description,
-            // حفظ المسار في حقل image_url
-            'image_url' => $imagePath,
-            'is_active' => $request->boolean('is_active', true),
+            'image_url'   => $imgPath, // حفظ المسار النسبي
+            'is_active'   => $request->boolean('is_active', true),
         ]);
 
-        return redirect()->route('services.index')
-                         ->with('success', 'تم إضافة الخدمة بنجاح!');
+        // تنظيف الكاش
+        Cache::forget('services_all');
+
+        return response()->json([
+            'status'  => true,
+            'message' => 'Service created successfully',
+            'data'    => $service,
+            'img_url' => $imgPath ? url($imgPath) : null,
+        ], 201);
     }
 
     /**
-     * عرض تفاصيل خدمة معينة.
+     * عرض تفاصيل خدمة مع الكاش.
      */
-    public function show(Service $service)
+    public function show($id)
     {
-        return view('services.show', compact('service'));
+        $service = Cache::remember("service_{$id}", 600, function () use ($id) {
+            return Service::findOrFail($id);
+        });
+
+        return response()->json($service);
     }
 
     /**
-     * عرض نموذج تعديل خدمة موجودة.
+     * تحديث خدمة مع حذف الصورة القديمة من المجلد.
      */
-    public function edit(Service $service)
+    public function update(Request $request, $id)
     {
-        return view('services.edit', compact('service'));
-    }
+        $this->checkAdmin();
+        $service = Service::findOrFail($id);
 
-    /**
-     * تحديث خدمة موجودة في قاعدة البيانات.
-     * (منطقها مشابه لـ store لكن يتضمن حذف الصورة القديمة إذا تم تحميل صورة جديدة)
-     */
-    public function update(Request $request, Service $service)
-    {
-        // ... منطق التحديث ...
+        $validator = Validator::make($request->all(), [
+            'name'        => 'nullable|string|max:255',
+            'description' => 'nullable|string',
+            'image'       => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
+            'is_active'   => 'nullable|boolean',
+        ]);
 
-        return redirect()->route('services.index')
-                         ->with('success', 'تم تحديث الخدمة بنجاح!');
-    }
-
-    /**
-     * حذف خدمة معينة.
-     */
-    public function destroy(Service $service)
-    {
-        // 1. حذف الصورة المرتبطة بالخدمة من نظام التخزين
-        if ($service->image_url) {
-            Storage::disk('public')->delete($service->image_url);
+        if ($validator->fails()) {
+            return response()->json($validator->errors(), 422);
         }
 
-        // 2. حذف السجل من قاعدة البيانات
+        $data = $request->only(['name', 'description', 'is_active']);
+
+        if ($request->hasFile('image')) {
+            // حذف الصورة القديمة يدويًا
+            if (!empty($service->image_url)) {
+                $oldImagePath = public_path($service->image_url);
+                if (file_exists($oldImagePath) && is_file($oldImagePath)) {
+                    unlink($oldImagePath);
+                }
+            }
+
+            $file = $request->file('image');
+            $fileName = time() . '_' . preg_replace('/[^A-Za-z0-9\-_\.]/', '_', $file->getClientOriginalName());
+            
+            $destinationPath = public_path('services');
+            if (!file_exists($destinationPath)) {
+                mkdir($destinationPath, 0755, true);
+            }
+
+            $file->move($destinationPath, $fileName);
+            $data['image_url'] = 'services/' . $fileName;
+        }
+
+        $service->update($data);
+
+        // تنظيف الكاش
+        Cache::forget('services_all');
+        Cache::forget("service_{$id}");
+
+        return response()->json([
+            'status'  => true,
+            'message' => 'Service updated successfully',
+            'data'    => $service,
+            'img_url' => $service->image_url ? url($service->image_url) : null,
+        ], 200);
+    }
+
+    /**
+     * حذف خدمة مع حذف الصورة من السيرفر.
+     */
+    public function destroy($id)
+    {
+        $this->checkAdmin();
+        $service = Service::findOrFail($id);
+
+        if ($service->image_url && file_exists(public_path($service->image_url))) {
+            unlink(public_path($service->image_url));
+        }
+
         $service->delete();
 
-        return redirect()->route('services.index')
-                         ->with('success', 'تم حذف الخدمة بنجاح!');
+        // تنظيف الكاش
+        Cache::forget('services_all');
+        Cache::forget("service_{$id}");
+
+        return response()->json([
+            'status'  => true,
+            'message' => 'Service deleted successfully'
+        ], 200);
     }
 }

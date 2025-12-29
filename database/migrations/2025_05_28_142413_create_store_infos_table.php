@@ -17,7 +17,8 @@ Schema::create('store_info', function (Blueprint $table) {
     $table->text('description');
     $table->string('logo');
     $table->text('footer_text');
-    $table->string('phone');
+    $table->string('phone_ar');
+    $table->string('phone_eg');
     $table->string('Shipping_number');
     $table->string('email');
     $table->string('address');

@@ -8,24 +8,25 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 
 class ProductController extends Controller
 {
     // حماية الوصول فقط للمسؤولين
-    protected function checkAdmin()
-    {
-        $user = Auth::user();
+protected function checkAdmin()
+{
+    $user = Auth::user();
 
-        if (!$user || $user->role !== 'admin') {
-            abort(403, 'Unauthorized: Admins only');
-        }
+    if (!$user || !in_array($user->role, ['admin', 'director', 'employee'])) {
+        abort(403, 'Unauthorized: Admins, Directors or Employees only');
     }
+}
 
-    // عرض كل المنتجات مع العلاقات
-    public function index()
-    {
+public function index()
+{
+    // 🧠 كاش لجميع المنتجات لمدة 10 دقائق
+    $products = Cache::remember('products_all', 600, function () {
         $products = Product::with(['category', 'brand', 'reviews'])->get();
-
         $now = Carbon::now();
 
         $products->transform(function ($product) use ($now) {
@@ -40,17 +41,23 @@ class ProductController extends Controller
             return $product;
         });
 
-        return response()->json([
-            'products' => $products
-        ], 200);
-    }
+        return $products;
+    });
 
-    // عرض منتج واحد
-    public function show($id)
-    {
-        $product = Product::with(['category', 'brand', 'reviews'])->findOrFail($id);
-        return response()->json($product);
-    }
+    return response()->json([
+        'products' => $products
+    ], 200);
+}
+
+public function show($id)
+{
+    // 🧠 كاش لكل منتج على حدة لمدة 10 دقائق
+    $product = Cache::remember("product_{$id}", 600, function () use ($id) {
+        return Product::with(['category', 'brand', 'reviews'])->findOrFail($id);
+    });
+
+    return response()->json($product);
+}
 
     // إنشاء منتج جديد
     public function store(Request $request)
@@ -60,7 +67,8 @@ class ProductController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string',
             'code' => 'required|string|unique:products',
-            'price' => 'required|numeric',
+            'price_eg' => 'required|numeric',
+            'price_ar' => 'required|numeric',
             'category_id' => 'required|exists:categories,id',
             'brand_id' => 'nullable|exists:brands,id',
             'img' => 'nullable|image|max:2048',
@@ -131,26 +139,32 @@ class ProductController extends Controller
             }
         }
 
-        $product = Product::create([
-            'name' => $request->name,
-            'name_en' => $request->name_en,
-            'code' => $request->code,
-            'price' => $request->price,
-            'category_id' => $request->category_id,
-            'brand_id' => $request->brand_id,
-            'img' => $imgPath,
-            'images' => $imagePaths,
-            'description' => $request->description,
-            'description_en' => $request->description_en,
-            'discount' => $request->discount,
-            'specs' => $specs,
-            'quantity' => $request->filled('quantity') ? $request->quantity : 0,
-            'isFeatured' => $request->isFeatured,
-            'discount_end_date' => $request->discount_end_date,
-            'rating' => $request->rating,
-            'seo_keywords' => $request->seo_keywords,
-            'seo_description' => $request->seo_description,
-        ]);
+    $product = Product::create([
+        'name' => $request->name,
+        'name_en' => $request->name_en,
+        'code' => $request->code,
+        'price_eg' => $request->price_eg,
+        'price_ar' => $request->price_ar,
+        'category_id' => $request->category_id,
+        'brand_id' => $request->brand_id,
+        'img' => $imgPath,
+        'images' => $imagePaths,
+        'description' => $request->description,
+        'description_en' => $request->description_en,
+        'discount' => $request->discount,
+        'specs' => $specs,
+        'quantity' => $request->filled('quantity') ? $request->quantity : 0,
+        'isFeatured' => $request->isFeatured ?? 0,
+        'discount_end_date' => $request->discount_end_date,
+        'rating' => $request->rating,
+        'seo_keywords' => $request->seo_keywords,
+        'seo_description' => $request->seo_description,
+    ]);
+
+           // 🧹 تنظيف الكاش بعد الإضافة
+    Cache::forget('products_all');
+    Cache::forget("product_{$product->id}");
+
 
         return response()->json([
             'product' => $product,
@@ -170,7 +184,8 @@ public function update(Request $request, $id)
     $validator = Validator::make($request->all(), [
         'name' => 'sometimes|string',
         'code' => 'sometimes|string|unique:products,code,' . $product->id,
-        'price' => 'sometimes|numeric',
+        'price_eg' => 'required|numeric',
+        'price_ar' => 'required|numeric',
         'category_id' => 'nullable|exists:categories,id',
         'brand_id' => 'nullable|exists:brands,id',
         'img' => 'nullable|image|max:2048',
@@ -262,6 +277,11 @@ public function update(Request $request, $id)
 
     \Log::info("✅ تم تحديث المنتج بنجاح ID: {$product->id}");
 
+   // 🧹 تنظيف الكاش بعد الإضافة
+    Cache::forget('products_all');
+    Cache::forget("product_{$product->id}");
+
+
     return response()->json([
         'message' => 'تم تحديث المنتج بنجاح',
         'product' => $product,
@@ -290,8 +310,13 @@ public function update(Request $request, $id)
                 }
             }
         }
+        
 
         $product->delete();
+
+   // 🧹 تنظيف الكاش بعد الإضافة
+    Cache::forget('products_all');
+    Cache::forget("product_{$product->id}");
 
         return response()->json(['message' => 'Product deleted successfully']);
     }

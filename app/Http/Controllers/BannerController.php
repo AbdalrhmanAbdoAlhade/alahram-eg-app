@@ -7,23 +7,34 @@ use App\Models\Banner;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 
 class BannerController extends Controller
 {
-    protected function checkAdmin()
-    {
-        $user = Auth::user();
+protected function checkAdmin()
+{
+    $user = Auth::user();
 
-        if (!$user || $user->role !== 'admin') {
-            abort(403, 'Unauthorized: Admins only');
-        }
+    // لو المستخدم غير مسجل دخول
+    if (!$user) {
+        abort(403, 'غير مصرح لك: يجب تسجيل الدخول');
     }
 
-    public function index()
+    // الأدوار المسموح لها
+    $allowedRoles = ['admin', 'director', 'employee'];
+
+    if (!in_array($user->role, $allowedRoles)) {
+        abort(403, 'غير مصرح لك: يجب أن تكون أدمن أو مدير أو موظف');
+    }
+}
+   public function index()
     {
-        $banners = Banner::with(['category', 'product'])->get()->map(function($banner) {
-            $banner->img_url = $banner->img ? url($banner->img) : null;
-            return $banner;
+        // 🧠 استخدم الكاش لمدة 10 دقائق (600 ثانية)
+        $banners = Cache::remember('banners_all', 600, function () {
+            return Banner::with(['category', 'product'])->get()->map(function($banner) {
+                $banner->img_url = $banner->img ? url($banner->img) : null;
+                return $banner;
+            });
         });
 
         return response()->json($banners);
@@ -31,11 +42,16 @@ class BannerController extends Controller
 
     public function show($id)
     {
-        $banner = Banner::with(['category', 'product'])->findOrFail($id);
-        $banner->img_url = $banner->img ? url($banner->img) : null;
+        // 🧠 كاش لكل بانر على حدة
+        $banner = Cache::remember("banner_{$id}", 600, function () use ($id) {
+            $b = Banner::with(['category', 'product'])->findOrFail($id);
+            $b->img_url = $b->img ? url($b->img) : null;
+            return $b;
+        });
 
         return response()->json($banner);
     }
+
 
 public function store(Request $request)
 {
@@ -61,6 +77,9 @@ public function store(Request $request)
 
         $banner = Banner::create($validated);
         $banner->img_url = url($validated['img']);
+        
+Cache::forget('banners_all');
+
 
         return response()->json([
             'message' => 'Banner created successfully',
@@ -113,10 +132,16 @@ public function update(Request $request, $id)
         $banner->update($validated);
         $banner->img_url = $banner->img ? url($banner->img) : null;
 
+        // ✅ امسح الكاش قبل الإرجاع
+        Cache::forget('banners_all');
+        Cache::forget("banner_{$id}");
+
         return response()->json([
             'message' => 'Banner updated successfully',
             'banner' => $banner,
         ]);
+
+
     } catch (\Illuminate\Validation\ValidationException $e) {
         return response()->json(['errors' => $e->errors()], 422);
     } catch (\Exception $e) {
@@ -137,6 +162,8 @@ public function update(Request $request, $id)
         }
 
         $banner->delete();
+Cache::forget('banners_all');
+Cache::forget("banner_{$id}");
 
         return response()->json(['message' => 'Banner deleted successfully']);
     }

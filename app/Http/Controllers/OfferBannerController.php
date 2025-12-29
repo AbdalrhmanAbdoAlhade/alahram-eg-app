@@ -9,50 +9,72 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Schema;
 use Carbon\Carbon;
-
+use Illuminate\Support\Facades\Cache;
 
 class OfferBannerController extends Controller
 {
     // حماية الوصول فقط للمسؤولين
-    protected function checkAdmin()
-    {
-        $user = Auth::user();
+protected function checkAdmin()
+{
+    $user = Auth::user();
 
-        if (!$user || $user->role !== 'admin') {
-            abort(403, 'Unauthorized: Admins only');
-        }
+    // لو المستخدم غير مسجل دخول
+    if (!$user) {
+        abort(403, 'غير مصرح لك: يجب تسجيل الدخول');
     }
+
+    // الأدوار المسموح لها
+    $allowedRoles = ['admin', 'director', 'employee'];
+
+    if (!in_array($user->role, $allowedRoles)) {
+        abort(403, 'غير مصرح لك: يجب أن تكون أدمن أو مدير أو موظف');
+    }
+}
 
 
 
 public function index()
 {
-    // حذف العروض المنتهية
-    OfferBanner::whereNotNull('end_date')
-        ->where('end_date', '<', Carbon::now())
-        ->each(function ($banner) {
-            if ($banner->img) {
-                Storage::disk('public')->delete($banner->img);
-            }
-            $banner->delete();
+    // 🧠 كاش لمدة 10 دقائق
+    $banners = Cache::remember('offer_banners_all', 600, function () {
+        // حذف العروض المنتهية
+        OfferBanner::whereNotNull('end_date')
+            ->where('end_date', '<', Carbon::now())
+            ->each(function ($banner) {
+                if ($banner->img) {
+                    Storage::disk('public')->delete($banner->img);
+                }
+                $banner->delete();
+            });
+
+        // جلب البيانات مع العلاقات
+        $data = OfferBanner::with(['category', 'product'])->get();
+
+        // تعديل رابط الصورة بناءً على الحالة
+        $data->transform(function ($banner) {
+            $banner->img_url = ($banner->img && $banner->img_status)
+                ? url('storage/' . $banner->img)
+                : null;
+            return $banner;
         });
 
-    $banners = OfferBanner::with(['category', 'product'])->get();
-
-    // تعديل img_url بناءً على img_status
-    $banners->transform(function ($banner) {
-        $banner->img_url = ($banner->img && $banner->img_status) ? url('storage/' . $banner->img) : null;
-        return $banner;
+        return $data;
     });
 
     return response()->json($banners);
 }
 
-    public function show($id)
-    {
-        $banner = OfferBanner::with(['category', 'product'])->findOrFail($id);
-        return response()->json($banner);
-    }
+public function show($id)
+{
+    // 🧠 كاش لكل بانر على حدة
+    $banner = Cache::remember("offer_banner_{$id}", 600, function () use ($id) {
+        return OfferBanner::with(['category', 'product'])->findOrFail($id);
+    });
+
+    return response()->json($banner);
+}
+
+
 
     public function store(Request $request)
     {
@@ -119,6 +141,10 @@ public function index()
     }
 
         $banner->update($validated);
+
+Cache::forget('offer_banners_all');
+Cache::forget("offer_banner_{$banner->id}");
+
 
         return response()->json([
             'message' => 'Offer banner updated successfully',
@@ -189,6 +215,9 @@ public function createOfferForAllProducts(Request $request)
             'img' => $validated['img'],
         ]);
     }
+// 🧹 تنظيف الكاش بعد الإضافة
+Cache::forget('offer_banners_all');
+Cache::forget("offer_banner_{$banner->id}");
 
     return response()->json(['message' => '✅ تم إنشاء عروض لجميع المنتجات وتحديث الخصم بنجاح']);
 }
@@ -241,6 +270,9 @@ public function deleteOffersForAllProducts()
 
         $banner->delete();
     }
+// 🧹 تنظيف الكاش بعد الإضافة
+Cache::forget('offer_banners_all');
+Cache::forget("offer_banner_{$banner->id}");
 
     return response()->json(['message' => '✅ تم حذف جميع العروض وتصفير الخصم من المنتجات.']);
 }

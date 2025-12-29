@@ -15,6 +15,8 @@ Schema::create('about_us', function (Blueprint $table) {
     $table->id();
     $table->string('title');
     $table->text('description');
+    $table->string('title_en');
+    $table->text('description_en');
     $table->string('image');
     $table->text('goal')->nullable();
     $table->text('mission')->nullable();

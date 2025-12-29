@@ -6,42 +6,49 @@ use App\Models\Category;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Cache;
 
 class CategoryController extends Controller
 {
-    protected function checkAdmin()
-    {
-        $user = Auth::user();
+protected function checkAdmin()
+{
+    $user = Auth::user();
 
-        if (!$user || $user->role !== 'admin') {
-            abort(403, 'Unauthorized: Admins only');
-        }
+    if (!$user || !in_array($user->role, ['admin', 'director', 'employee'])) {
+        abort(403, 'Unauthorized: Admins, Directors or Employees only');
     }
+}
 
-    // جلب جميع التصنيفات مع السب كاتيجوري
-    public function index()
-    {
-        $categories = Category::with('children')->get();
+   public function index()
+{
+    // 🧠 كاش لجميع التصنيفات لمدة 10 دقائق (600 ثانية)
+    $categories = Cache::remember('categories_all', 600, function () {
+        $data = Category::with('children')->get();
 
-        $categories->transform(function ($category) {
+        $data->transform(function ($category) {
             $category->img_url = $category->img ? url($category->img) : null;
             $category->banner_url = ($category->banner && $category->banner_status) ? url($category->banner) : null;
             return $category;
         });
 
-        return response()->json($categories);
-    }
+        return $data;
+    });
 
-    // عرض تصنيف واحد مع السب كاتيجوري
-    public function show($id)
-    {
-        $category = Category::with('children')->findOrFail($id);
+    return response()->json($categories);
+}
 
-        $category->img_url = $category->img ? url($category->img) : null;
-        $category->banner_url = ($category->banner && $category->banner_status) ? url($category->banner) : null;
+public function show($id)
+{
+    // 🧠 كاش لتصنيف واحد فقط
+    $category = Cache::remember("category_{$id}", 600, function () use ($id) {
+        $cat = Category::with('children')->findOrFail($id);
+        $cat->img_url = $cat->img ? url($cat->img) : null;
+        $cat->banner_url = ($cat->banner && $cat->banner_status) ? url($cat->banner) : null;
+        return $cat;
+    });
 
-        return response()->json($category);
-    }
+    return response()->json($category);
+}
 
     // إنشاء تصنيف جديد
     public function store(Request $request)
@@ -84,6 +91,10 @@ class CategoryController extends Controller
         }
 
         $category = Category::create($validated);
+        
+Cache::forget('categories_all');
+Cache::forget("category_{$category->id}");
+
 
         return response()->json([
             'message' => 'تم إنشاء الصنف بنجاح.',
@@ -140,6 +151,8 @@ class CategoryController extends Controller
         }
 
         $category->update($validated);
+Cache::forget('categories_all');
+Cache::forget("category_{$category->id}");
 
         return response()->json([
             'message' => 'تم تعديل الصنف بنجاح.',
@@ -182,6 +195,8 @@ class CategoryController extends Controller
         }
 
         $category->delete();
+Cache::forget('categories_all');
+Cache::forget("category_{$category->id}");
 
         return response()->json(['message' => 'تم حذف التصنيف بنجاح.']);
     }

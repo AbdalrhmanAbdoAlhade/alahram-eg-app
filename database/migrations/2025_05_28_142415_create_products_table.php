@@ -17,9 +17,12 @@ Schema::create('products', function (Blueprint $table) {
     $table->json('images')->nullable();
     $table->string('img');
     $table->string('name');
+    $table->string('name_en');
     $table->string('code')->unique();
-    $table->decimal('price', 10, 2);
+    $table->decimal('price_ar', 10, 2);
+    $table->decimal('price_eg', 10, 2);
     $table->text('description')->nullable();
+    $table->text('description_en')->nullable();
     $table->integer('discount')->nullable();
     $table->json('specs')->nullable();
     $table->unsignedBigInteger('brand_id')->nullable();
