@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Http;
+use App\Jobs\SendWhatsAppMessageJob; 
 
 class WhatsAppController extends Controller
 {
@@ -14,26 +14,32 @@ class WhatsAppController extends Controller
             'message' => 'required|string',
         ]);
 
-        $response = Http::post(
-            'http://w.alahrm.com/api/sessions/abdo/send-text',
-            [
-                'to' => $request->to,
-                'message' => $request->message,
-            ]
-        );
-
-        if ($response->successful()) {
-            return response()->json([
-                'status' => true,
-                'message' => 'تم إرسال رسالة الواتساب بنجاح',
-                'data' => $response->json(),
-            ]);
-        }
+        SendWhatsAppMessageJob::dispatch($request->to, $request->message);
 
         return response()->json([
-            'status' => false,
-            'message' => 'فشل في إرسال رسالة الواتساب',
-            'error' => $response->body(),
-        ], 500);
+            'status' => true,
+            'message' => 'تم إضافة الرسالة لطابور الإرسال بنجاح، ستصل خلال لحظات.',
+        ]);
     }
+  public function sendBulkMessage(Request $request)
+{
+    // نفترض أن الطلب يحتوي على مصفوفة أرقام ونص الرسالة
+    $request->validate([
+        'phones' => 'required|array', // مثال: ["010...", "012...", "015..."]
+        'message' => 'required|string',
+    ]);
+
+    $phones = $request->input('phones');
+    $message = $request->input('message');
+
+    foreach ($phones as $phone) {
+        // كل رقم يتم رميه في الطابور كـ Job منفصل
+        \App\Jobs\SendWhatsAppMessageJob::dispatch($phone, $message);
+    }
+
+    return response()->json([
+        'status' => true,
+        'message' => 'تمت إضافة ' . count($phones) . ' رسالة إلى طابور الإرسال.',
+    ]);
+}
 }

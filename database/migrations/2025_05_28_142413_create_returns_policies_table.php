@@ -14,6 +14,7 @@ return new class extends Migration
 Schema::create('returns_policy', function (Blueprint $table) {
     $table->id();
     $table->text('description')->nullable();
+   $table->text('description_en')->nullable();
     $table->timestamps();
 });
 

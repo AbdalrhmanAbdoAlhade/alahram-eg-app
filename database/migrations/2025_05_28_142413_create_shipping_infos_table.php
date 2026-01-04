@@ -14,6 +14,7 @@ return new class extends Migration
 Schema::create('shipping_info', function (Blueprint $table) {
     $table->id();
     $table->text('description')->nullable();
+    $table->text('description_en')->nullable();
     $table->timestamps();
 });
 

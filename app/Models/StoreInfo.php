@@ -18,12 +18,11 @@ class StoreInfo extends Model
         'Shipping_number',
         'email',
         'address',
-        'social_media', // ✅ أضفنا هذا الحقل الجديد
+        'social_media',
         'seo_description',
         'seo_keywords',
     ];
 
-    // ✅ نحول الـ social_media تلقائيًا إلى array
     protected $casts = [
         'social_media' => 'array',
     ];

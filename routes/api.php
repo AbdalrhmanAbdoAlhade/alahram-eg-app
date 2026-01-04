@@ -25,10 +25,11 @@ use Illuminate\Support\Facades\Mail;
 use App\Http\Controllers\MailController;
 use App\Http\Controllers\UserNotificationController;
 use App\Http\Controllers\ServiceController;
+use App\Http\Controllers\WhatsAppController;
 
 
-
-
+Route::post('sendBulkMessage', [WhatsAppController::class, 'sendBulkMessage']);
+    Route::post('sendMessage', [WhatsAppController::class, 'sendMessage']);
 // خارج الميدل وير (للزوار)
 Route::get('services', [ServiceController::class, 'index']);
 Route::get('services/{id}', [ServiceController::class, 'show']);
