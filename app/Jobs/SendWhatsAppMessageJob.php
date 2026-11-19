@@ -13,24 +13,22 @@ class SendWhatsAppMessageJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    protected $phone;
-    protected $message;
-
-    // إعادة المحاولة 3 مرات في حال فشل السيرفر
     public $tries = 3;
 
-    public function __construct($phone, $message)
-    {
-        $this->phone = $phone;
-        $this->message = $message;
+    public $backoff = [10, 60];
+
+    public function __construct(
+        protected $phone,
+        protected $message,
+        protected ?string $session = null
+    ) {
     }
 
     public function handle(WhatsAppService $service)
     {
-        $sent = $service->sendText($this->phone, $this->message);
+        $sent = $service->sendText($this->phone, $this->message, $this->session);
 
         if (!$sent) {
-            // إذا فشل، نلقي استثناء ليعيد الطابور المحاولة
             throw new \Exception("Failed to send WhatsApp to {$this->phone}");
         }
     }

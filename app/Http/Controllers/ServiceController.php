@@ -60,7 +60,7 @@ protected function checkAdmin()
         $validator = Validator::make($request->all(), [
             'name'        => 'required|string|max:255',
             'description' => 'nullable|string',
-            'image'       => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
+            'image'       => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:20048',
             'is_active'   => 'nullable|boolean',
         ]);
 
@@ -127,7 +127,7 @@ protected function checkAdmin()
         $validator = Validator::make($request->all(), [
             'name'        => 'nullable|string|max:255',
             'description' => 'nullable|string',
-            'image'       => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
+            'image'       => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:20048',
             'is_active'   => 'nullable|boolean',
         ]);
 

@@ -18,7 +18,30 @@ class StoreInfoController extends Controller
     }
 }
 
+public function toggleStatus()
+    {
+      
 
+        $info = StoreInfo::first();
+
+        if (!$info) {
+            return response()->json([
+                'status' => false,
+                'message' => 'لم يتم إعداد معلومات المتجر بعد'
+            ], 404);
+        }
+
+        // عكس القيمة الحالية لـ stats
+        $info->stats = !$info->stats;
+        $info->save();
+
+        return response()->json([
+            'status' => true,
+            'message' => $info->stats ? 'تم فتح المتجر بنجاح' : 'تم إغلاق المتجر بنجاح',
+            'current_stats' => $info->stats // هيرجع true أو false صريحة
+        ]);
+    }
+  
     public function index()
     {
         $infos = StoreInfo::all();
@@ -55,7 +78,7 @@ public function store(Request $request)
     $validated = $request->validate([
         'name' => 'required|string|max:255',
         'description' => 'nullable|string',
-        'logo' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
+        'logo' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:20048',
         'footer_text' => 'nullable|string',
         'phone_eg' => 'nullable|string|max:20',
         'phone_ar' => 'nullable|string|max:20',
@@ -69,6 +92,7 @@ public function store(Request $request)
         'seo_description' => 'nullable|string',
         'seo_keywords' => 'nullable|string',
         'Shipping_number' => 'nullable|string|max:20',
+      'stats' => 'nullable|boolean',
     ]);
 
     // ✅ رفع شعار المتجر
@@ -119,7 +143,7 @@ public function update(Request $request, $id)
     $validated = $request->validate([
         'name' => 'sometimes|string|max:255',
         'description' => 'nullable|string',
-        'logo' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
+        'logo' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:20048',
         'footer_text' => 'nullable|string',
            'phone_ar' => 'nullable|string|max:20',
         'phone_eg' => 'nullable|string|max:20',
@@ -133,6 +157,7 @@ public function update(Request $request, $id)
         'seo_description' => 'nullable|string',
         'seo_keywords' => 'nullable|string',
         'Shipping_number' => 'nullable|string|max:20',
+      'stats' => 'nullable|boolean',
     ]);
 
     // ✅ تحديث صورة الشعار

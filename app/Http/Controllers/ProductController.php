@@ -2,81 +2,259 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Controllers\Controller;
 use App\Models\Product;
+use App\Models\ProductType;
+use App\Traits\HandlesWebpImages;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
-use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Carbon\Carbon;
 
 class ProductController extends Controller
 {
-    // حماية الوصول فقط للمسؤولين
-protected function checkAdmin()
-{
-    $user = Auth::user();
+    use HandlesWebpImages;
 
-    if (!$user || !in_array($user->role, ['admin', 'director', 'employee'])) {
-        abort(403, 'Unauthorized: Admins, Directors or Employees only');
+    /**
+     * إعدادات ضغط الصور (تقدر تلعب فيها).
+     */
+    private const IMG_QUALITY   = 80;
+    private const IMG_MAX_WIDTH = 1200;
+
+    /**
+     * السماح فقط للمسؤولين والموظفين.
+     */
+    protected function checkAdmin()
+    {
+        $user = Auth::user();
+
+        if (!$user || !$user->hasAnyRole(['admin', 'director', 'employee'])) {
+            abort(403, 'Unauthorized: Admins, Directors or Employees only');
+        }
     }
+
+    /**
+     * قواعد التحقق المشتركة لخطوات الشرح.
+     */
+    protected function getStepsValidationRules(): array
+    {
+        return [
+            'steps' => 'nullable|array',
+            'steps.*.title' => 'required_with:steps|string|max:255',
+            'steps.*.step_number' => 'required_with:steps|integer|min:1',
+            'steps.*.description' => 'required_with:steps|string',
+        ];
+    }
+
+    /**
+     * حفظ خطوات شرح المنتج.
+     */
+    protected function saveProductSteps(Product $product, array $steps): void
+    {
+        foreach ($steps as $step) {
+            $product->steps()->create([
+                'title' => $step['title'],
+                'step_number' => $step['step_number'],
+                'description' => $step['description'],
+            ]);
+        }
+    }
+
+    /**
+     * إنشاء أو جلب نوع المنتج.
+     */
+    protected function resolveProductType(?int $typeId, ?array $typeData): ?int
+    {
+        if ($typeId) {
+            return $typeId;
+        }
+
+        if ($typeData && !empty($typeData['name'])) {
+            $type = ProductType::firstOrCreate(
+                ['name' => trim($typeData['name'])]
+            );
+
+            return $type->id;
+        }
+
+        return null;
+    }
+
+    /**
+     * تنظيف كاش المنتجات.
+     */
+    protected function clearProductCache($productId = null): void
+    {
+        Cache::forget('products_all');
+
+        if ($productId) {
+            Cache::forget("product_{$productId}");
+        }
+    }
+
+    /**
+     * رفع صورة واحدة كـ WebP (helper مختصر).
+     */
+    protected function uploadImage(\Illuminate\Http\UploadedFile $file): string
+    {
+        return $this->storeAsWebp(
+            $file,
+            'products',
+            self::IMG_QUALITY,
+            self::IMG_MAX_WIDTH
+        );
+    }
+
+    /**
+     * توليد URL للصورة — يدعم المكان الجديد (Storage) والقديم (public_path).
+     */
+   
+/**
+ * Generate image URL for both Storage and legacy public images.
+ */
+protected function imageUrl(?string $path): ?string
+{
+    if (!$path) {
+        return null;
+    }
+
+    $path = ltrim($path, '/');
+
+    // Remove storage/ prefix if already present.
+    if (str_starts_with($path, 'storage/')) {
+        $path = substr($path, 8);
+    }
+
+    // New images stored in storage/app/public.
+    if (Storage::disk('public')->exists($path)) {
+        return asset('storage/' . $path);
+    }
+
+    // Legacy images stored directly in public/.
+    if (file_exists(public_path($path))) {
+        return asset($path);
+    }
+
+    return asset('storage/' . $path);
 }
 
-public function index()
-{
-    // 🧠 كاش لجميع المنتجات لمدة 10 دقائق
-    $products = Cache::remember('products_all', 600, function () {
-        $products = Product::with(['category', 'brand', 'reviews'])->get();
-        $now = Carbon::now();
+    /**
+     * حذف صورة من المكانين (Storage + public_path) للتوافق مع البيانات القديمة.
+     */
+    protected function deleteProductImage(?string $path): void
+    {
+        if (!$path) {
+            return;
+        }
 
-        $products->transform(function ($product) use ($now) {
-            // إلغاء الخصم إذا انتهى تاريخه
-            if ($product->discount_end_date && $product->discount_end_date < $now) {
-                $product->discount = 0;
-            }
+        // Storage
+        $this->deleteImage($path);
 
-            // حساب متوسط التقييم
-            $product->rating_avg = $product->reviews->avg('rating') ?? 0;
+        // public_path (للصور القديمة)
+        $fullPath = public_path($path);
+        if (is_file($fullPath)) {
+            @unlink($fullPath);
+        }
+    }
 
-            return $product;
+    /**
+     * جلب جميع المنتجات.
+     */
+    public function index()
+    {
+        $products = Cache::remember('products_all', 600, function () {
+            $products = Product::with([
+                'category',
+                'brand',
+                'productType',
+                'reviews',
+                'steps',
+            ])->get();
+
+            $now = Carbon::now();
+
+            $products->transform(function ($product) use ($now) {
+
+                if (
+                    $product->discount_end_date &&
+                    Carbon::parse($product->discount_end_date)->lt($now)
+                ) {
+                    $product->discount = 0;
+                }
+
+$product->rating_avg = $product->reviews->avg('rating') ?? 0;
+
+// روابط الصور
+$product->img_url = $this->imageUrl($product->img);
+
+$product->images_urls = is_array($product->images)
+    ? array_map(fn($img) => $this->imageUrl($img), $product->images)
+    : [];
+
+return $product;
+            });
+
+            return $products;
         });
 
-        return $products;
-    });
+        return response()->json([
+            'products' => $products,
+        ], 200);
+    }
 
-    return response()->json([
-        'products' => $products
-    ], 200);
-}
+    /**
+     * عرض منتج واحد بالتفاصيل.
+     */
+    public function show($id)
+    {
+        $product = Cache::remember("product_{$id}", 600, function () use ($id) {
+            return Product::with([
+                'category',
+                'brand',
+                'productType',
+                'reviews',
+                'steps',
+            ])->findOrFail($id);
+        });
 
-public function show($id)
-{
-    // 🧠 كاش لكل منتج على حدة لمدة 10 دقائق
-    $product = Cache::remember("product_{$id}", 600, function () use ($id) {
-        return Product::with(['category', 'brand', 'reviews'])->findOrFail($id);
-    });
+      $product->img_url = $this->imageUrl($product->img);
 
-    return response()->json($product);
-}
+$product->images_urls = is_array($product->images)
+    ? array_map(fn($img) => $this->imageUrl($img), $product->images)
+    : [];
 
-    // إنشاء منتج جديد
+return response()->json($product, 200);
+    }
+
+    /**
+     * إنشاء منتج جديد.
+     */
     public function store(Request $request)
     {
         $this->checkAdmin();
 
-        $validator = Validator::make($request->all(), [
+        $rules = [
             'name' => 'required|string',
-            'code' => 'required|string|unique:products',
+            'code' => 'required|string|unique:products,code',
             'price_eg' => 'required|numeric',
             'price_ar' => 'required|numeric',
             'category_id' => 'required|exists:categories,id',
             'brand_id' => 'nullable|exists:brands,id',
-            'img' => 'nullable|image|max:2048',
+
+            'type_id' => 'nullable|exists:product_types,id',
+            'type' => 'nullable|array',
+            'type.name' => 'required_with:type|string|max:255',
+
+            'img' => 'nullable|image|max:20048',
             'images' => 'nullable|array',
-            'images.*' => 'image|max:2048',
+            'images.*' => 'image|max:20048',
+
             'description' => 'nullable|string',
             'name_en' => 'nullable|string|max:255',
             'description_en' => 'nullable|string',
+
             'discount' => 'nullable|numeric',
             'specs' => 'nullable|array',
             'quantity' => 'nullable|integer',
@@ -85,45 +263,54 @@ public function show($id)
             'rating' => 'nullable|numeric',
             'seo_keywords' => 'nullable|string',
             'seo_description' => 'nullable|string',
-        ]);
+
+            'youtube_video_url' => [
+                'nullable',
+                'url',
+                'max:2048',
+                'regex:/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i',
+            ],
+        ];
+
+        $validator = Validator::make(
+            $request->all(),
+            array_merge($rules, $this->getStepsValidationRules())
+        );
 
         if ($validator->fails()) {
-            return response()->json($validator->errors(), 422);
+            return response()->json([
+                'errors' => $validator->errors(),
+            ], 422);
         }
+
+        $data = $validator->validated();
 
         $imgPath = null;
+        $imagePaths = [];
 
-        // رفع الصورة الرئيسية
-    if ($request->hasFile('img')) {
-        $file = $request->file('img');
-        $fileNameOriginal = $file->getClientOriginalName();
-        $fileNameClean = preg_replace('/[^A-Za-z0-9\-_\.]/', '_', $fileNameOriginal);
-        $fileName = time() . '_' . $fileNameClean;
+        // ============ رفع الصور وتحويلها لـ WebP ============
+        try {
+            if ($request->hasFile('img')) {
+                $imgPath = $this->uploadImage($request->file('img'));
+            }
 
-        $destinationPath = public_path('products');
-        if (!file_exists($destinationPath)) {
-            mkdir($destinationPath, 0755, true);
+            if ($request->hasFile('images')) {
+                foreach ($request->file('images') as $image) {
+                    $imagePaths[] = $this->uploadImage($image);
+                }
+            }
+        } catch (\Throwable $e) {
+            // فشل رفع الصور → نظّف أي ملف اترفع قبل الفشل
+            $this->deleteProductImage($imgPath);
+            foreach ($imagePaths as $p) {
+                $this->deleteProductImage($p);
+            }
+
+            throw $e;
         }
 
-        $file->move($destinationPath, $fileName);
-        $imgPath = 'products/' . $fileName;
-    }
-
-    // رفع صور متعددة
-    $imagePaths = [];
-    if ($request->hasFile('images')) {
-        foreach ($request->file('images') as $image) {
-            $fileNameOriginal = $image->getClientOriginalName();
-            $fileNameClean = preg_replace('/[^A-Za-z0-9\-_\.]/', '_', $fileNameOriginal);
-            $fileName = time() . '_' . $fileNameClean;
-
-            $image->move($destinationPath, $fileName);
-            $imagePaths[] = 'products/' . $fileName;
-        }
-    }
-
-        // معالجة specs بشكل صحيح
-        $specsInput = $request->input('specs');
+        // معالجة specs
+        $specsInput = $request->input('specs', []);
         $specs = [];
 
         if (is_array($specsInput)) {
@@ -139,185 +326,291 @@ public function show($id)
             }
         }
 
-    $product = Product::create([
-        'name' => $request->name,
-        'name_en' => $request->name_en,
-        'code' => $request->code,
-        'price_eg' => $request->price_eg,
-        'price_ar' => $request->price_ar,
-        'category_id' => $request->category_id,
-        'brand_id' => $request->brand_id,
-        'img' => $imgPath,
-        'images' => $imagePaths,
-        'description' => $request->description,
-        'description_en' => $request->description_en,
-        'discount' => $request->discount,
-        'specs' => $specs,
-        'quantity' => $request->filled('quantity') ? $request->quantity : 0,
-        'isFeatured' => $request->isFeatured ?? 0,
-        'discount_end_date' => $request->discount_end_date,
-        'rating' => $request->rating,
-        'seo_keywords' => $request->seo_keywords,
-        'seo_description' => $request->seo_description,
-    ]);
+        try {
+            $product = DB::transaction(function () use ($data, $imgPath, $imagePaths, $specs) {
 
-           // 🧹 تنظيف الكاش بعد الإضافة
-    Cache::forget('products_all');
-    Cache::forget("product_{$product->id}");
+                $typeId = $this->resolveProductType(
+                    $data['type_id'] ?? null,
+                    $data['type'] ?? null
+                );
 
+                $product = Product::create([
+                    'name' => $data['name'],
+                    'name_en' => $data['name_en'] ?? null,
+                    'code' => $data['code'],
 
-        return response()->json([
-            'product' => $product,
-            'img_url' => $imgPath ? url($imgPath) : null,
-            'images_urls' => array_map(fn($img) => url($img), $imagePaths),
-        ], 201);
-    }
+                    'price_eg' => $data['price_eg'],
+                    'price_ar' => $data['price_ar'],
 
-    // تحديث منتج
-public function update(Request $request, $id)
-{
-    $this->checkAdmin();
+                    'category_id' => $data['category_id'],
+                    'brand_id' => $data['brand_id'] ?? null,
+                    'type_id' => $typeId,
 
-    $product = Product::findOrFail($id);
-    \Log::info("🔧 بدء تحديث المنتج ID: {$product->id}");
+                    'img' => $imgPath,
+                    'images' => $imagePaths,
 
-    $validator = Validator::make($request->all(), [
-        'name' => 'sometimes|string',
-        'code' => 'sometimes|string|unique:products,code,' . $product->id,
-        'price_eg' => 'required|numeric',
-        'price_ar' => 'required|numeric',
-        'category_id' => 'nullable|exists:categories,id',
-        'brand_id' => 'nullable|exists:brands,id',
-        'img' => 'nullable|image|max:2048',
-        'images' => 'nullable|array',
-        'images.*' => 'image|max:2048',
-        'description' => 'nullable|string',
-        'discount' => 'nullable|numeric',
-        'specs' => 'nullable|array',
-        'quantity' => 'nullable|integer',
-        'isFeatured' => 'nullable|boolean',
-        'discount_end_date' => 'nullable|date',
-        'rating' => 'nullable|numeric',
-        'seo_keywords' => 'nullable|string',
-        'seo_description' => 'nullable|string',
-        'name_en' => 'nullable|string|max:255',
-        'description_en' => 'nullable|string',
-    ]);
+                    'description' => $data['description'] ?? null,
+                    'description_en' => $data['description_en'] ?? null,
 
-    if ($validator->fails()) {
-        \Log::warning("⚠️ فشل التحقق من صحة البيانات عند تحديث المنتج ID: {$product->id}", $validator->errors()->toArray());
-        return response()->json($validator->errors(), 422);
-    }
+                    'discount' => $data['discount'] ?? 0,
+                    'specs' => $specs,
 
-    $data = $validator->validated();
-    $destinationPath = public_path('products');
+                    'quantity' => $data['quantity'] ?? 0,
+                    'isFeatured' => $data['isFeatured'] ?? 0,
 
-    // إنشاء المجلد إذا لم يكن موجودًا
-    if (!file_exists($destinationPath)) {
-        mkdir($destinationPath, 0755, true);
-    }
+                    'discount_end_date' => $data['discount_end_date'] ?? null,
+                    'rating' => $data['rating'] ?? null,
 
-    // 1. معالجة الصورة الرئيسية (img)
-    if ($request->hasFile('img')) {
-        // حذف الصورة القديمة إن وجدت وكانت ملفًا
-        if (!empty($product->img)) {
-            $oldImagePath = public_path($product->img);
-            if (file_exists($oldImagePath) && is_file($oldImagePath)) {
-                unlink($oldImagePath);
-            }
-        }
+                    'seo_keywords' => $data['seo_keywords'] ?? null,
+                    'seo_description' => $data['seo_description'] ?? null,
 
-        $file = $request->file('img');
-        $fileName = time() . '_' . preg_replace('/[^A-Za-z0-9\-_\.]/', '_', $file->getClientOriginalName());
-        $file->move($destinationPath, $fileName);
-        $data['img'] = 'products/' . $fileName;
-    }
+                    'youtube_video_url' => $data['youtube_video_url'] ?? null,
+                ]);
 
-    // 2. معالجة الصور المتعددة (images)
-    if ($request->has('images')) {
-        // حذف الصور القديمة إن وجدت وكانت ملفات
-        if (!empty($product->images) && is_array($product->images)) {
-            foreach ($product->images as $oldImage) {
-                $oldImagePath = public_path($oldImage);
-                if (file_exists($oldImagePath) && is_file($oldImagePath)) {
-                    unlink($oldImagePath);
+                if (!empty($data['steps'])) {
+                    $this->saveProductSteps($product, $data['steps']);
                 }
-            }
-        }
 
-        $imagePaths = [];
-        if ($request->hasFile('images')) {
-            foreach ($request->file('images') as $image) {
-                $fileName = time() . '_' . preg_replace('/[^A-Za-z0-9\-_\.]/', '_', $image->getClientOriginalName());
-                $image->move($destinationPath, $fileName);
-                $imagePaths[] = 'products/' . $fileName;
+                return $product;
+            });
+
+            $this->clearProductCache($product->id);
+
+            $product->load([
+                'category',
+                'brand',
+                'productType',
+                'reviews',
+                'steps',
+            ]);
+
+            return response()->json([
+                'message' => 'Product created successfully',
+                'product' => $product,
+                'img_url' => $this->imageUrl($imgPath),
+                'images_urls' => array_map(
+                    fn($img) => $this->imageUrl($img),
+                    $imagePaths
+                ),
+            ], 201);
+
+        } catch (\Throwable $e) {
+            // DB فشل → احذف الصور المرفوعة
+            $this->deleteProductImage($imgPath);
+            foreach ($imagePaths as $p) {
+                $this->deleteProductImage($p);
             }
+
+            throw $e;
         }
-        $data['images'] = $imagePaths;
     }
 
-    // 3. معالجة المواصفات (specs)
-    if (isset($data['specs'])) {
-        $specs = [];
-        foreach ($data['specs'] as $item) {
-            if (is_array($item)) {
-                $specs[] = $item;
-            } elseif (is_string($item)) {
-                $decoded = json_decode($item, true);
-                if (json_last_error() === JSON_ERROR_NONE) {
-                    $specs[] = $decoded;
+    /**
+     * تحديث منتج.
+     */
+    public function update(Request $request, $id)
+    {
+        $this->checkAdmin();
+
+        $product = Product::findOrFail($id);
+
+        $rules = [
+            'name' => 'sometimes|required|string',
+            'code' => 'sometimes|required|string|unique:products,code,' . $product->id,
+
+            'price_eg' => 'required|numeric',
+            'price_ar' => 'required|numeric',
+
+            'category_id' => 'nullable|exists:categories,id',
+            'brand_id' => 'nullable|exists:brands,id',
+
+            'type_id' => 'nullable|exists:product_types,id',
+            'type' => 'nullable|array',
+            'type.name' => 'required_with:type|string|max:255',
+
+            'img' => 'nullable|image|max:20048',
+            'images' => 'nullable|array',
+            'images.*' => 'image|max:20048',
+
+            'description' => 'nullable|string',
+            'discount' => 'nullable|numeric',
+            'specs' => 'nullable|array',
+
+            'quantity' => 'nullable|integer',
+            'isFeatured' => 'nullable|boolean',
+            'discount_end_date' => 'nullable|date',
+            'rating' => 'nullable|numeric',
+
+            'seo_keywords' => 'nullable|string',
+            'seo_description' => 'nullable|string',
+
+            'name_en' => 'nullable|string|max:255',
+            'description_en' => 'nullable|string',
+
+            'youtube_video_url' => [
+                'nullable',
+                'url',
+                'max:2048',
+                'regex:/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i',
+            ],
+        ];
+
+        $validator = Validator::make(
+            $request->all(),
+            array_merge($rules, $this->getStepsValidationRules())
+        );
+
+        if ($validator->fails()) {
+            return response()->json([
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $data = $validator->validated();
+
+        $oldImages = [];  // هنحذفها بعد نجاح الـ DB
+        $newImages = [];  // هنحذفها لو الـ DB فشل
+
+        try {
+            // الصورة الرئيسية الجديدة
+            if ($request->hasFile('img')) {
+                $newPath = $this->uploadImage($request->file('img'));
+                $newImages[] = $newPath;
+
+                if ($product->img) {
+                    $oldImages[] = $product->img;
                 }
+
+                $data['img'] = $newPath;
             }
+
+            // الصور الإضافية الجديدة
+            if ($request->hasFile('images')) {
+                if (is_array($product->images)) {
+                    foreach ($product->images as $oldImage) {
+                        $oldImages[] = $oldImage;
+                    }
+                }
+
+                $imagePaths = [];
+                foreach ($request->file('images') as $image) {
+                    $newPath = $this->uploadImage($image);
+                    $newImages[] = $newPath;
+                    $imagePaths[] = $newPath;
+                }
+
+                $data['images'] = $imagePaths;
+            }
+
+            // معالجة specs
+            if (isset($data['specs'])) {
+                $specs = [];
+
+                foreach ($data['specs'] as $item) {
+                    if (is_array($item)) {
+                        $specs[] = $item;
+                    } elseif (is_string($item)) {
+                        $decoded = json_decode($item, true);
+                        if (json_last_error() === JSON_ERROR_NONE) {
+                            $specs[] = $decoded;
+                        }
+                    }
+                }
+
+                $data['specs'] = $specs;
+            }
+
+            DB::transaction(function () use ($product, $data) {
+
+                $stepsProvided = array_key_exists('steps', $data);
+                $steps = $data['steps'] ?? [];
+
+                unset($data['steps']);
+
+                if (array_key_exists('type_id', $data) || array_key_exists('type', $data)) {
+                    $data['type_id'] = $this->resolveProductType(
+                        $data['type_id'] ?? null,
+                        $data['type'] ?? null
+                    );
+                }
+
+                unset($data['type']);
+
+                $product->update(
+                    array_filter($data, fn($v) => $v !== null)
+                );
+
+                if ($stepsProvided) {
+                    $product->steps()->delete();
+                    if (!empty($steps)) {
+                        $this->saveProductSteps($product, $steps);
+                    }
+                }
+            });
+
+            // ✅ الـ DB نجح → امسح الصور القديمة من Storage + public_path
+            foreach ($oldImages as $oldPath) {
+                $this->deleteProductImage($oldPath);
+            }
+
+            $this->clearProductCache($product->id);
+
+            $product->refresh()->load([
+                'category',
+                'brand',
+                'productType',
+                'reviews',
+                'steps',
+            ]);
+
+            return response()->json([
+                'message' => 'تم تحديث المنتج بنجاح',
+                'product' => $product,
+                'img_url' => $this->imageUrl($product->img),
+                'images_urls' => is_array($product->images)
+                    ? array_map(fn($img) => $this->imageUrl($img), $product->images)
+                    : [],
+            ], 200);
+
+        } catch (\Throwable $e) {
+            // ❌ الـ DB فشل → امسح الصور الجديدة اللي اترفعت
+            foreach ($newImages as $path) {
+                $this->deleteProductImage($path);
+            }
+
+            throw $e;
         }
-        $data['specs'] = $specs;
     }
 
-    // تحديث البيانات مع تجاهل الحقول الفارغة
-    $product->update(array_filter($data, fn($value) => $value !== null));
-
-    \Log::info("✅ تم تحديث المنتج بنجاح ID: {$product->id}");
-
-   // 🧹 تنظيف الكاش بعد الإضافة
-    Cache::forget('products_all');
-    Cache::forget("product_{$product->id}");
-
-
-    return response()->json([
-        'message' => 'تم تحديث المنتج بنجاح',
-        'product' => $product,
-        'img_url' => $product->img ? url($product->img) : null,
-        'images_urls' => $product->images ? array_map(fn($img) => url($img), $product->images) : [],
-    ]);
-}
-
-
-
-    // حذف منتج مع حذف الصور من المجلد العام
+    /**
+     * حذف منتج مع خطواته وصوره.
+     */
     public function destroy($id)
     {
         $this->checkAdmin();
 
         $product = Product::findOrFail($id);
 
-        if ($product->img && file_exists(public_path($product->img))) {
-            unlink(public_path($product->img));
+        $productId = $product->id;
+
+        $imgPath = $product->img;
+        $images = is_array($product->images) ? $product->images : [];
+
+        DB::transaction(function () use ($product) {
+            $product->steps()->delete();
+            $product->delete();
+        });
+
+        // احذف الصور من Storage + public_path
+        $this->deleteProductImage($imgPath);
+        foreach ($images as $image) {
+            $this->deleteProductImage($image);
         }
 
-        if ($product->images && is_array($product->images)) {
-            foreach ($product->images as $image) {
-                if (file_exists(public_path($image))) {
-                    unlink(public_path($image));
-                }
-            }
-        }
-        
+        $this->clearProductCache($productId);
 
-        $product->delete();
-
-   // 🧹 تنظيف الكاش بعد الإضافة
-    Cache::forget('products_all');
-    Cache::forget("product_{$product->id}");
-
-        return response()->json(['message' => 'Product deleted successfully']);
+        return response()->json([
+            'message' => 'Product deleted successfully',
+        ], 200);
     }
 }

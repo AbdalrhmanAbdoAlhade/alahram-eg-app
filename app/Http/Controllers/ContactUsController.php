@@ -5,34 +5,38 @@ namespace App\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Models\ContactUs;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 
 class ContactUsController extends Controller
 {
-    protected function checkAdmin()
+    // عرض كل الرسائل - فلتر: ?status=read | unread
+    public function index(Request $request)
     {
-        $user = Auth::user();
+        $query = ContactUs::query()->latest();
 
-        if (!$user || $user->role !== 'admin') {
-            abort(403, 'Unauthorized: Admins only');
+        if ($request->status === 'read') {
+            $query->read();
+        } elseif ($request->status === 'unread') {
+            $query->unread();
         }
+
+        return response()->json([
+            'unread_count' => ContactUs::unread()->count(),
+            'contacts'     => $query->get(),
+        ]);
     }
 
-    // عرض كل الرسائل (للمشرف فقط)
-    public function index()
-    {
-       
-
-        $contacts = ContactUs::all();
-        return response()->json($contacts);
-    }
-
-    // عرض رسالة محددة (للمشرف فقط)
+    // عرض رسالة محددة - وبتتعلّم مقروءة تلقائيًا
     public function show($id)
     {
-        $this->checkAdmin();
-
         $contact = ContactUs::findOrFail($id);
+
+        if (!$contact->is_read) {
+            $contact->update([
+                'is_read' => true,
+                'read_at' => now(),
+            ]);
+        }
+
         return response()->json($contact);
     }
 
@@ -40,9 +44,9 @@ class ContactUsController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'nullable|email',
-            'phone' => 'nullable|string|max:20',
+            'name'    => 'required|string|max:255',
+            'email'   => 'nullable|email',
+            'phone'   => 'nullable|string|max:20',
             'subject' => 'nullable|string|max:255',
             'message' => 'nullable|string',
         ]);
@@ -55,17 +59,15 @@ class ContactUsController extends Controller
         ], 201);
     }
 
-    // تعديل رسالة (للمشرف فقط)
+    // تعديل رسالة
     public function update(Request $request, $id)
     {
-      
-
         $contact = ContactUs::findOrFail($id);
 
         $validated = $request->validate([
-            'name' => 'sometimes|string|max:255',
-            'email' => 'nullable|email',
-            'phone' => 'nullable|string|max:20',
+            'name'    => 'sometimes|string|max:255',
+            'email'   => 'nullable|email',
+            'phone'   => 'nullable|string|max:20',
             'subject' => 'nullable|string|max:255',
             'message' => 'nullable|string',
         ]);
@@ -78,11 +80,55 @@ class ContactUsController extends Controller
         ]);
     }
 
-    // حذف رسالة (للمشرف فقط)
+    // تعليم رسالة كمقروءة
+    public function markAsRead($id)
+    {
+        $contact = ContactUs::findOrFail($id);
+
+        $contact->update([
+            'is_read' => true,
+            'read_at' => now(),
+        ]);
+
+        return response()->json([
+            'message' => 'Marked as read',
+            'contact' => $contact,
+        ]);
+    }
+
+    // تعليم رسالة كغير مقروءة
+    public function markAsUnread($id)
+    {
+        $contact = ContactUs::findOrFail($id);
+
+        $contact->update([
+            'is_read' => false,
+            'read_at' => null,
+        ]);
+
+        return response()->json([
+            'message' => 'Marked as unread',
+            'contact' => $contact,
+        ]);
+    }
+
+    // تعليم كل الرسائل كمقروءة
+    public function markAllAsRead()
+    {
+        $count = ContactUs::unread()->update([
+            'is_read' => true,
+            'read_at' => now(),
+        ]);
+
+        return response()->json([
+            'message' => 'All messages marked as read',
+            'updated' => $count,
+        ]);
+    }
+
+    // حذف رسالة
     public function destroy($id)
     {
-        $this->checkAdmin();
-
         $contact = ContactUs::findOrFail($id);
         $contact->delete();
 

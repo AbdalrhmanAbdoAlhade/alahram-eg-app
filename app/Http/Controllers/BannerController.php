@@ -65,7 +65,7 @@ public function store(Request $request)
             'description_en' => 'nullable|string',
             'category_id' => 'nullable|integer|exists:categories,id',
             'product_id' => 'nullable|integer|exists:products,id',
-            'img' => 'required|image|max:2048',
+            'img' => 'required|image|max:20048',
         ]);
 
         if ($request->hasFile('img')) {
@@ -110,7 +110,7 @@ public function update(Request $request, $id)
             'description_en' => 'nullable|string',
             'category_id' => 'nullable|integer|exists:categories,id',
             'product_id' => 'nullable|integer|exists:products,id',
-            'img' => 'nullable|image|max:2048',
+            'img' => 'nullable|image|max:20048',
         ]);
 
         if ($request->hasFile('img')) {

@@ -90,7 +90,7 @@ public function show($id)
             'end_date' => 'nullable|date',
             'img_status' => 'nullable|boolean',
             'discount' => 'nullable|numeric|min:0',
-            'img' => 'required|image|max:2048',
+            'img' => 'required|image|max:20048',
             
         ]);
 
@@ -125,7 +125,7 @@ public function show($id)
             'end_date' => 'nullable|date',
             'img_status' => 'nullable|boolean',
             'discount' => 'nullable|numeric|min:0',
-            'img' => 'nullable|image|max:2048',
+            'img' => 'nullable|image|max:20048',
             
         ]);
 

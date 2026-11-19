@@ -6,8 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class StoreInfo extends Model
 {
-    protected $table = 'store_info';  
-    
+    protected $table = 'store_info';
+
     protected $fillable = [
         'name',
         'description',
@@ -21,9 +21,12 @@ class StoreInfo extends Model
         'social_media',
         'seo_description',
         'seo_keywords',
+          'instapay_id',
+    'vodafone_cash_number',
     ];
 
     protected $casts = [
         'social_media' => 'array',
+        'stats' => 'boolean',
     ];
 }

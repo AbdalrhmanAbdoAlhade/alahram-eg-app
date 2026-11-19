@@ -61,8 +61,8 @@ public function show($id)
 
             $validated = $request->validate([
                 'name' => 'required|string|max:255',
-                'img' => 'nullable|image|max:2048',
-                'link' => 'nullable|string|max:2048',
+                'img' => 'nullable|image|max:20048',
+                'link' => 'nullable|string|max:20048',
             ]);
 
         if ($request->hasFile('img')) {
@@ -102,8 +102,8 @@ public function show($id)
 
             $validated = $request->validate([
                 'name' => 'sometimes|string|max:255',
-                'img' => 'nullable|image|max:2048',
-                 'link' => 'nullable|string|max:2048',
+                'img' => 'nullable|image|max:20048',
+                 'link' => 'nullable|string|max:20048',
             ]);
 
     if ($request->hasFile('img')) {

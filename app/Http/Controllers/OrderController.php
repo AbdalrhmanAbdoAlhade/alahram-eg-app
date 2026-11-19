@@ -2,200 +2,238 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
+use App\Http\Requests\StoreOrderRequest;
+use App\Jobs\SendWhatsAppMessageJob;
 use App\Models\Order;
 use App\Models\OrderItem;
-use App\Models\Product;
-use App\Models\DiscountCoupon;
-use Illuminate\Support\Facades\Auth;
-use App\Models\OfferBanner;
-use App\Models\UserNotification;
 use App\Models\User;
-use App\Models\Setting;
-use App\Models\DeliveryArea;
+use App\Services\OrderService;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-// استيراد الـ Job الجديد
-use App\Jobs\SendWhatsAppMessageJob; 
+use Illuminate\Validation\ValidationException;
+use App\Models\UserNotification;
 
 class OrderController extends Controller
 {
-    /**
-     * دالة مساعدة معدلة لإرسال رسائل الواتساب عبر نظام الطوابير
-     */
-    private function sendWhatsAppMessage($phone, $message)
+    public function __construct(protected OrderService $orderService)
     {
-        // بدلاً من انتظار الـ API، نرسل المهمة للخلفية فوراً
-        SendWhatsAppMessageJob::dispatch($phone, $message);
     }
 
-    public function index()
+    /**
+     * إرسال رسالة واتساب عبر الطابور.
+     */
+      private function sendWhatsAppMessage($phone, $message): void
     {
-        $orders = Order::with('items.product', 'coupon')->latest()->get();
+        if (!$phone) {
+            return;
+        }
+
+        app(\App\Services\WhatsAppService::class)->sendText($phone, $message);
+    }
+    /**
+     * الأدمن والمدراء (Spatie Roles).
+     */
+    private function adminUsers()
+    {
+        return User::role(['admin', 'director'])->get();
+    }
+
+    /**
+     * جلب جميع الطلبات.
+     */
+public function index(Request $request)
+    {
+        $query = Order::with('items.product', 'coupon', 'latestPayment')
+            ->latest();
+
+        $categoryIds = [];
+        $brandId = $request->input('brand_id');
+        $typeId  = $request->input('type_id');
+
+        // ✅ فلترة بالكاتيجوري (+ الأبناء اختياريًا)
+        if ($categoryId = $request->input('category_id')) {
+            $categoryIds = [$categoryId];
+
+            if ($request->boolean('include_children', false)) {
+                $category = Category::find($categoryId);
+
+                if ($category) {
+                    $categoryIds = array_merge(
+                        $categoryIds,
+                        $category->children()->pluck('id')->all()
+                    );
+                }
+            }
+
+            $query->whereHas('items.product', function ($q) use ($categoryIds) {
+                $q->whereIn('category_id', $categoryIds);
+            });
+        }
+
+        // فلترة بالبراند
+        if ($brandId) {
+            $query->whereHas('items.product', function ($q) use ($brandId) {
+                $q->where('brand_id', $brandId);
+            });
+        }
+
+        // فلترة بنوع المنتج
+        if ($typeId) {
+            $query->whereHas('items.product', function ($q) use ($typeId) {
+                $q->where('type_id', $typeId);
+            });
+        }
+
+        // فلترة بالحالة
+        if ($status = $request->input('status')) {
+            $query->where('status', $status);
+        }
+
+        // فلترة بطريقة الدفع
+        if ($paymentType = $request->input('payment_type')) {
+            $query->where('payment_type', $paymentType);
+        }
+
+        // فلترة بالتاريخ
+        if ($dateFrom = $request->input('date_from')) {
+            $query->whereDate('created_at', '>=', $dateFrom);
+        }
+        if ($dateTo = $request->input('date_to')) {
+            $query->whereDate('created_at', '<=', $dateTo);
+        }
+
+        // بحث
+        if ($search = $request->input('search')) {
+            $query->where(function ($q) use ($search) {
+                $q->where('id', $search)
+                    ->orWhere('name', 'like', "%{$search}%")
+                    ->orWhere('phone', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%");
+            });
+        }
+
+        // الترقيم (اختياري)
+        if ($perPage = $request->input('paginate')) {
+            $orders = $query->paginate((int) $perPage);
+        } else {
+            $orders = $query->get();
+        }
+
+        // لو عايز الـ items ترجع مفلترة كمان (بس اللي من الكاتيجوري/البراند)
+        if ($request->boolean('only_matching_items')) {
+            $collection = $orders instanceof \Illuminate\Pagination\LengthAwarePaginator
+                ? $orders->getCollection()
+                : $orders;
+
+            $collection->each(function ($order) use ($categoryIds, $brandId) {
+                $order->setRelation(
+                    'items',
+                    $order->items->filter(function ($item) use ($categoryIds, $brandId) {
+                        $product = $item->product;
+                        if (!$product) {
+                            return false;
+                        }
+                        if ($categoryIds && !in_array($product->category_id, $categoryIds)) {
+                            return false;
+                        }
+                        if ($brandId && $product->brand_id != $brandId) {
+                            return false;
+                        }
+                        return true;
+                    })->values()
+                );
+            });
+        }
 
         return response()->json([
             'orders' => $orders,
         ]);
     }
 
-    public function store(Request $request)
+
+    /**
+     * إنشاء طلب جديد.
+     */
+    public function store(StoreOrderRequest $request)
     {
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'phone' => 'required|string|max:20',
-            'email' => 'required|email|max:255',
-            'address' => 'required|string',
-            'city' => 'required|string|max:255',
-            'payment_type' => 'required|in:cash,online',
-            'products' => 'required|array|min:1',
-            'products.*.product_id' => 'required|exists:products,id',
-            'products.*.quantity' => 'required|integer|min:1',
-            'coupon_code' => 'nullable|string',
-            'user_id' => 'nullable|exists:users,id',
-            'area_id' => 'required|exists:delivery_areas,id',
-            'country' => 'required|in:eg,sa', 
-        ]);
+        $data = $request->validated();
 
-        $userId = $request->user_id;
-        $totalBeforeDiscount = 0;
-        $totalDiscountAmount = 0;
-        $coupon = null;
+        // لو العميل مسجل دخول بناخد الـ id من التوكن بدل ما نثق في الـ request
+        $userId = $request->user('sanctum')?->id;
 
-        if ($request->filled('coupon_code')) {
-            $coupon = DiscountCoupon::where('code', $request->coupon_code)
-                ->where('active', true)
-                ->where('end_date', '>', now())
-                ->first();
+        $calc = $this->orderService->calculate(
+            $data['products'],
+            $data['country'],
+            $data['coupon_code'] ?? null
+        );
+
+        $receiptPath = null;
+
+        if ($request->hasFile('receipt') && $data['payment_type'] !== 'cash') {
+            $receiptPath = $this->orderService->storeReceipt($request->file('receipt'));
         }
 
-        $orderItems = [];
+        try {
+            $order = DB::transaction(function () use ($data, $calc, $userId, $receiptPath) {
 
-        foreach ($request->products as $item) {
-            $product = Product::findOrFail($item['product_id']);
-            $quantity = $item['quantity'];
-            
-            $basePrice = $request->country === 'eg' ? $product->price_eg : $product->price_ar;
+                $order = Order::create([
+                    'user_id' => $userId,
 
-            $discounts = [];
+                    'name' => $data['name'],
+                    'company' => $data['company'] ?? null,
+                    'phone' => $data['phone'],
+                    'whatsapp_number' => $data['whatsapp_number'] ?? null,
+                    'email' => $data['email'] ?? null,
 
-            if ($product->discount && (!$product->discount_end_date || $product->discount_end_date > now())) {
-                $discounts[] = $product->discount;
-            }
+                    'country' => $data['country'],
+                    'state' => $data['state'] ?? null,
+                    'governorate' => $data['governorate'] ?? null,
+                    'city' => $data['city'],
+                    'district' => $data['district'] ?? null,
+                    'address' => $data['address'],
+                    'latitude' => $data['latitude'] ?? null,
+                    'longitude' => $data['longitude'] ?? null,
+                    'notes' => $data['notes'] ?? null,
 
-            $offer = OfferBanner::where(function ($q) use ($product) {
-                    $q->where('product_id', $product->id)
-                      ->orWhere('category_id', $product->category_id);
-                })
-                ->where(function ($q) {
-                    $q->whereNull('end_date')->orWhere('end_date', '>', now());
-                })
-                ->orderByDesc('discount')
-                ->first();
+                    'payment_type' => $data['payment_type'],
+                    'status' => 'pending',
 
-            if ($offer && $offer->discount) {
-                $discounts[] = $offer->discount;
-            }
+                    'discount_coupon_id' => $calc['coupon']?->id,
+                    'discount_amount' => $calc['discount_amount'],
+                    'shipping_cost' => $calc['shipping_cost'],
+                    'vat_percentage' => $calc['vat_percentage'],
+                    'vat_amount' => $calc['vat_amount'],
+                    'total_price' => $calc['total'],
 
-            if ($coupon) {
-                $discounts[] = $coupon->discount;
-            }
+                    'terms_accepted_at' => now(),
+                ]);
 
-            $highestDiscount = !empty($discounts) ? max($discounts) : 0;
-            $finalPrice = $basePrice - ($basePrice * $highestDiscount / 100);
-            $totalBeforeDiscount += $basePrice * $quantity;
-            $totalDiscountAmount += ($basePrice - $finalPrice) * $quantity;
+                foreach ($calc['items'] as $item) {
+                    OrderItem::create([
+                        'order_id' => $order->id,
+                        'product_id' => $item['product_id'],
+                        'quantity' => $item['quantity'],
+                        'price' => $item['price'],
+                    ]);
+                }
 
-            $orderItems[] = [
-                'product' => $product,
-                'quantity' => $quantity,
-                'final_price' => $finalPrice,
-            ];
+                $this->orderService->createPayment($order, $data, $receiptPath);
+
+                return $order;
+            });
+        } catch (\Throwable $e) {
+            // لو العملية فشلت نشيل الإيصال اللي اترفع للتو
+            $this->orderService->discardUploadedReceipt($receiptPath);
+
+            throw $e;
         }
 
-        $totalAfterDiscount = $totalBeforeDiscount - $totalDiscountAmount;
+        $order->load('items.product', 'coupon', 'latestPayment');
 
-        $area = DeliveryArea::find($request->area_id);
-        $shippingCost = $area->shipping_cost ?? 0;
+        $this->notifyOrderCreated($order, $receiptPath !== null);
 
-        $freeShippingLimit = Setting::first()?->free_shipping_limit;
-
-        if ($freeShippingLimit && $totalAfterDiscount >= $freeShippingLimit) {
-            $shippingCost = 0;
-        }
-
-        $vatPercentage = Setting::first()?->vat ?? 0;
-        $vatAmount = ($totalAfterDiscount + $shippingCost) * ($vatPercentage / 100);
-        $finalTotal = $totalAfterDiscount + $shippingCost + $vatAmount;
-
-        $order = Order::create([
-            'user_id' => $userId,
-            'name' => $request->name,
-            'phone' => $request->phone,
-            'email' => $request->email,
-            'city' => $request->city,
-            'address' => $request->address,
-            'payment_type' => $request->payment_type,
-            'discount_coupon_id' => $coupon?->id,
-            'discount_amount' => $totalDiscountAmount,
-            'total_price' => $finalTotal,
-            'status' => 'pending',
-            'area' => $area->name,
-            'shipping_cost' => $shippingCost,
-            'vat_percentage' => $vatPercentage,
-            'vat_amount' => $vatAmount,
-            'country' => $request->country,   
-        ]);
-
-        foreach ($orderItems as $item) {
-            OrderItem::create([
-                'order_id' => $order->id,
-                'product_id' => $item['product']->id,
-                'quantity' => $item['quantity'],
-                'price' => $item['final_price'],
-            ]);
-        }
-
-        // تحضير نص تفاصيل المنتجات للرسالة
-        $productsSummary = "";
-        foreach ($orderItems as $item) {
-            $productsSummary .= "- " . $item['product']->name . " (العدد: " . $item['quantity'] . ")\n";
-        }
-
-        $currency = ($order->country == 'eg' ? 'ج.م' : 'ر.س');
-
-        // 1. رسالة للمستخدم (عبر الطابور)
-        $userWhatsappMessage = "تأكيد استلام طلبك - شركة الأهرام\n\n" .
-            "عزيزي {$order->name}، نشكرك على تسوقك معنا. تم استلام طلبك رقم {$order->id} بنجاح.\n\n" .
-            "تفاصيل المنتجات:\n" .
-            $productsSummary . "\n" .
-            "تفاصيل الطلب:\n" .
-            "- المجموع الكلي: {$order->total_price} {$currency}\n" .
-            "- حالة الطلب: قيد الانتظار\n" .
-            "- العنوان: {$order->address}\n\n" .
-            "سنقوم بمعالجة طلبك في أقرب وقت ممكن. شكرا لك.";
-        
-        $this->sendWhatsAppMessage($order->phone, $userWhatsappMessage);
-
-        // 2. رسالة للأدمن (عبر الطابور)
-        $admins = User::where('role', 'admin')->get();
-        foreach ($admins as $admin) {
-            if ($admin->phone) {
-                $adminWhatsappMessage = "تنبيه: تم إنشاء طلب جديد في النظام\n\n" .
-                    "رقم الطلب: {$order->id}\n" .
-                    "العميل: {$order->name}\n" .
-                    "الجوال: {$order->phone}\n" .
-                    "المدينة: {$order->city}\n\n" .
-                    "المنتجات المطلوبة:\n" .
-                    $productsSummary . "\n" .
-                    "الإجمالي: {$order->total_price} {$currency}\n" .
-                    "طريقة الدفع: {$order->payment_type}\n\n" .
-                    "يرجى مراجعة لوحة التحكم للمتابعة.";
-                
-                $this->sendWhatsAppMessage($admin->phone, $adminWhatsappMessage);
-            }
-        }
-
-        // --- إنشاء الإشعارات الداخلية ---
         try {
             if ($userId) {
                 UserNotification::create([
@@ -206,183 +244,267 @@ class OrderController extends Controller
                     'data' => ['order_id' => $order->id],
                 ]);
             }
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('فشل إنشاء إشعار داخلي: ' . $e->getMessage());
         }
 
         return response()->json([
-            'message' => 'تم إنشاء الطلب بنجاح وجارٍ إرسال الإشعارات عبر واتساب في الخلفية',
-            'order' => $order->load('items.product', 'coupon'),
-        ]);
+            'message' => 'تم إنشاء الطلب بنجاح',
+            'order' => $order,
+        ], 201);
     }
 
+    /**
+     * رسائل الواتساب بعد إنشاء الطلب.
+     */
+    protected function notifyOrderCreated(Order $order, bool $hasReceipt): void
+    {
+        $productsSummary = $this->orderService->productsSummary($order);
+        $currency = $this->orderService->currency($order->country);
+
+        $paymentLabels = [
+            'cash' => 'كاش عند الاستلام',
+            'vodafone_cash' => 'فودافون كاش',
+            'instapay' => 'انستاباي',
+        ];
+
+        $paymentLabel = $paymentLabels[$order->payment_type] ?? $order->payment_type;
+
+        $userMessage = "تأكيد استلام طلبك - شركة الأهرام\n\n" .
+            "عزيزي {$order->name}، نشكرك على تسوقك معنا. تم استلام طلبك رقم {$order->id} بنجاح.\n\n" .
+            "تفاصيل المنتجات:\n" .
+            $productsSummary . "\n" .
+            "تفاصيل الطلب:\n" .
+            "- المجموع الكلي: {$order->total_price} {$currency}\n" .
+            "- طريقة الدفع: {$paymentLabel}\n" .
+            "- حالة الطلب: قيد الانتظار\n" .
+            "- العنوان: {$order->address}\n\n" .
+            ($hasReceipt ? "تم استلام إيصال الدفع وجاري مراجعته.\n\n" : '') .
+            "سنقوم بمعالجة طلبك في أقرب وقت ممكن. شكرا لك.";
+
+        $this->sendWhatsAppMessage($order->whatsapp_number ?: $order->phone, $userMessage);
+
+        $adminMessage = "تنبيه: تم إنشاء طلب جديد في النظام\n\n" .
+            "رقم الطلب: {$order->id}\n" .
+            "العميل: {$order->name}\n" .
+            "الجوال: {$order->phone}\n" .
+            "المدينة: {$order->city}\n\n" .
+            "المنتجات المطلوبة:\n" .
+            $productsSummary . "\n" .
+            "الإجمالي: {$order->total_price} {$currency}\n" .
+            "طريقة الدفع: {$paymentLabel}\n" .
+            ($hasReceipt ? "يوجد إيصال دفع محتاج مراجعة.\n" : '') .
+            "\nيرجى مراجعة لوحة التحكم للمتابعة.";
+
+        foreach ($this->adminUsers() as $admin) {
+            $this->sendWhatsAppMessage($admin->phone, $adminMessage);
+        }
+    }
+
+    /**
+     * تحديث طلب.
+     */
     public function update(Request $request, $id)
     {
         $request->validate([
             'name' => 'sometimes|string|max:255',
-            'phone' => 'sometimes|string|max:20',
-            'email' => 'sometimes|email|max:255',
+            'company' => 'nullable|string|max:255',
+            'phone' => 'sometimes|string|max:30',
+            'whatsapp_number' => 'nullable|string|max:30',
+            'email' => 'nullable|email|max:255',
+
+            'country' => 'sometimes|in:eg,sa',
+            'state' => 'nullable|string|max:255',
+            'governorate' => 'nullable|string|max:255',
             'city' => 'sometimes|string|max:255',
+            'district' => 'nullable|string|max:255',
             'address' => 'sometimes|required|string',
+            'latitude' => 'nullable|numeric|between:-90,90',
+            'longitude' => 'nullable|numeric|between:-180,180',
+            'notes' => 'nullable|string|max:2000',
+
             'products' => 'sometimes|array|min:1',
             'products.*.product_id' => 'required_with:products|exists:products,id',
             'products.*.quantity' => 'required_with:products|integer|min:1',
-            'coupon_code' => 'nullable|string',
+            'coupon_code' => 'nullable|string|max:100',
+
             'status' => 'sometimes|in:pending,shipping,completed,paid,canceled',
-            'area_id' => 'sometimes|exists:delivery_areas,id',
-            'country' => 'sometimes|in:eg,sa',
         ]);
 
-        $order = Order::with('items.product')->findOrFail($id);
+        $order = Order::with('items')->findOrFail($id);
         $oldStatus = $order->status;
 
-        if ($request->has('name')) $order->name = $request->name;
-        if ($request->has('phone')) $order->phone = $request->phone;
-        if ($request->has('email')) $order->email = $request->email;
-        if ($request->has('city')) $order->city = $request->city;
-        if ($request->has('address')) $order->address = $request->address;
-        if ($request->has('status')) $order->status = $request->status;
-        if ($request->has('country')) $order->country = $request->country;
+        $fields = [
+            'name', 'company', 'phone', 'whatsapp_number', 'email',
+            'country', 'state', 'governorate', 'city', 'district',
+            'address', 'latitude', 'longitude', 'notes', 'status',
+        ];
 
-        $coupon = null;
-        if ($request->filled('coupon_code')) {
-            $coupon = DiscountCoupon::where('code', $request->coupon_code)
-                ->where('active', true)
-                ->where('end_date', '>', now())
-                ->first();
-            $order->discount_coupon_id = $coupon?->id;
+        foreach ($fields as $field) {
+            if ($request->has($field)) {
+                $order->{$field} = $request->input($field);
+            }
         }
 
-        $totalBeforeDiscount = 0;
-        $totalDiscountAmount = 0;
+        // إعادة حساب الأسعار لما المنتجات أو الكوبون أو الدولة تتغير
+        $needsRecalculation = $request->has('products')
+            || $request->has('coupon_code')
+            || $request->has('country');
 
-        if ($request->has('products')) {
-            OrderItem::where('order_id', $order->id)->delete();
+        if ($needsRecalculation) {
 
-            foreach ($request->products as $item) {
-                $product = Product::findOrFail($item['product_id']);
-                $quantity = $item['quantity'];
-                
-                $country = $request->has('country') ? $request->country : $order->country;
-                $basePrice = $country === 'eg' ? $product->price_eg : $product->price_ar;
-
-                $discounts = [];
-                if ($product->discount && (!$product->discount_end_date || $product->discount_end_date > now())) {
-                    $discounts[] = $product->discount;
-                }
-
-                $offer = OfferBanner::where(function ($q) use ($product) {
-                        $q->where('product_id', $product->id)->orWhere('category_id', $product->category_id);
-                    })
-                    ->where(function ($q) {
-                        $q->whereNull('end_date')->orWhere('end_date', '>', now());
-                    })
-                    ->orderByDesc('discount')->first();
-
-                if ($offer) $discounts[] = $offer->discount;
-                if ($coupon) $discounts[] = $coupon->discount;
-
-                $highestDiscount = !empty($discounts) ? max($discounts) : 0;
-                $finalPrice = $basePrice - ($basePrice * $highestDiscount / 100);
-
-                $totalBeforeDiscount += $basePrice * $quantity;
-                $totalDiscountAmount += ($basePrice - $finalPrice) * $quantity;
-
-                OrderItem::create([
-                    'order_id' => $order->id,
-                    'product_id' => $product->id,
-                    'quantity' => $quantity,
-                    'price' => $finalPrice,
+            if (
+                $oldStatus === 'completed'
+                || $order->payments()->where('status', 'approved')->exists()
+            ) {
+                throw ValidationException::withMessages([
+                    'products' => 'مينفعش تعدّل الأسعار أو المنتجات بعد اكتمال الطلب أو اعتماد الدفع.',
                 ]);
             }
+
+            $products = $request->has('products')
+                ? $request->input('products')
+                : $order->items->map(fn ($item) => [
+                    'product_id' => $item->product_id,
+                    'quantity' => $item->quantity,
+                ])->all();
+
+            $couponCode = $request->has('coupon_code')
+                ? $request->input('coupon_code')
+                : $order->coupon?->code;
+
+            $calc = $this->orderService->calculate($products, $order->country, $couponCode);
+
+            DB::transaction(function () use ($order, $calc) {
+
+                OrderItem::where('order_id', $order->id)->delete();
+
+                foreach ($calc['items'] as $item) {
+                    OrderItem::create([
+                        'order_id' => $order->id,
+                        'product_id' => $item['product_id'],
+                        'quantity' => $item['quantity'],
+                        'price' => $item['price'],
+                    ]);
+                }
+
+                $order->discount_coupon_id = $calc['coupon']?->id;
+                $order->discount_amount = $calc['discount_amount'];
+                $order->shipping_cost = $calc['shipping_cost'];
+                $order->vat_percentage = $calc['vat_percentage'];
+                $order->vat_amount = $calc['vat_amount'];
+                $order->total_price = $calc['total'];
+
+                $order->save();
+
+                // تحديث مبلغ آخر دفعة معلقة عشان يطابق الإجمالي الجديد
+                $order->payments()
+                    ->where('status', 'pending')
+                    ->update(['amount' => $calc['total']]);
+            });
         } else {
-            foreach ($order->items as $item) {
-                $totalBeforeDiscount += $item->price * $item->quantity;
-            }
+            $order->save();
         }
 
-        if ($request->has('area_id')) {
-            $area = DeliveryArea::find($request->area_id);
-            $order->area = $area->name;
-            $shippingCost = $area->shipping_cost ?? 0;
-        } else {
-            $shippingCost = $order->shipping_cost ?? 0;
-        }
-
-        $totalAfterDiscount = $totalBeforeDiscount - $totalDiscountAmount;
-        $freeShippingLimit = Setting::first()?->free_shipping_limit;
-        if ($freeShippingLimit && $totalAfterDiscount >= $freeShippingLimit) {
-            $shippingCost = 0;
-        }
-
-        $vatPercentage = Setting::first()?->vat ?? 0;
-        $vatAmount = ($totalAfterDiscount + $shippingCost) * ($vatPercentage / 100);
-
-        $order->vat_percentage = $vatPercentage;
-        $order->vat_amount = $vatAmount;
-        $order->total_price = $totalAfterDiscount + $shippingCost + $vatAmount;
-        $order->discount_amount = $totalDiscountAmount;
-        $order->shipping_cost = $shippingCost;
-
-        $order->save();
-
+        // المخزون (عمود quantity في جدول المنتجات)
         if ($order->status === 'completed' && $oldStatus !== 'completed') {
-            foreach ($order->items as $item) {
-                $item->product->decrement('stock', $item->quantity);
-            }
+            $this->orderService->decrementStock($order);
+        } elseif ($oldStatus === 'completed' && $order->status !== 'completed') {
+            $this->orderService->incrementStock($order);
         }
 
-        // --- إرسال رسائل الواتساب المحدثة (عبر الطابور) ---
-        $productsSummary = "";
-        foreach ($order->load('items.product')->items as $item) {
-            $productsSummary .= "- " . $item->product->name . " (العدد: " . $item->quantity . ")\n";
+        $order->load('items.product', 'coupon', 'latestPayment');
+
+        $this->notifyOrderUpdated($order, $oldStatus);
+
+        return response()->json([
+            'message' => 'تم تحديث الطلب بنجاح',
+            'order' => $order,
+        ]);
+    }
+
+    /**
+     * رسائل الواتساب بعد تحديث الطلب (بس لو الحالة اتغيرت).
+     */
+    protected function notifyOrderUpdated(Order $order, string $oldStatus): void
+    {
+        if ($order->status === $oldStatus) {
+            return;
         }
 
-        $currency = ($order->country == 'eg' ? 'ج.م' : 'ر.س');
+        $productsSummary = $this->orderService->productsSummary($order);
+        $currency = $this->orderService->currency($order->country);
 
-        // 1. رسالة المستخدم
-        $userWhatsappMessage = "تحديث طلب - شركة الأهرام\n\n" .
-            "عزيزي {$order->name}، تم تحديث حالة طلبك رقم {$order->id} بنجاح.\n\n" .
+        $userMessage = "تحديث طلب - شركة الأهرام\n\n" .
+            "عزيزي {$order->name}، تم تحديث حالة طلبك رقم {$order->id}.\n\n" .
             "الحالة الجديدة: " . strtoupper($order->status) . "\n\n" .
             "المنتجات في الطلب:\n" .
             $productsSummary . "\n" .
             "المجموع النهائي: {$order->total_price} {$currency}\n\n" .
             "نشكركم لتسوقكم معنا.";
 
-        $this->sendWhatsAppMessage($order->phone, $userWhatsappMessage);
+        $this->sendWhatsAppMessage($order->whatsapp_number ?: $order->phone, $userMessage);
 
-        // 2. رسالة الأدمن
-        $admins = User::where('role', 'admin')->get();
-        $adminWhatsappMessage = " تنبيه: تم تحديث طلب\n\n" .
+        $adminMessage = "تنبيه: تم تحديث طلب\n\n" .
             "رقم الطلب: {$order->id}\n" .
             "العميل: {$order->name}\n" .
             "الحالة الجديدة: {$order->status}\n\n" .
             "المنتجات:\n" .
             $productsSummary . "\n" .
-            "الإجمالي الجديد: {$order->total_price} {$currency}";
+            "الإجمالي: {$order->total_price} {$currency}";
 
-        foreach ($admins as $admin) {
-            if ($admin->phone) {
-                $this->sendWhatsAppMessage($admin->phone, $adminWhatsappMessage);
-            }
+        foreach ($this->adminUsers() as $admin) {
+            $this->sendWhatsAppMessage($admin->phone, $adminMessage);
         }
-
-        return response()->json([
-            'message' => 'تم تحديث الطلب والمخزن بنجاح، الإشعارات قيد الإرسال',
-            'order' => $order->load('items.product')
-        ]);
     }
 
+    /**
+     * طلبات المستخدم الحالي.
+     */
     public function myOrders()
     {
         $user = Auth::user();
-        $orders = $user->orders()->with('items.product', 'user', 'coupon')->latest()->get();
+
+        $orders = $user->orders()
+            ->with('items.product', 'user', 'coupon', 'latestPayment')
+            ->latest()
+            ->get();
+
         return response()->json(['orders' => $orders]);
     }
 
-    public function show($id)
+    /**
+     * عرض طلب بالتفاصيل (مع كل محاولات الدفع).
+     */
+   public function show($id)
+{
+    $order = Order::with('user', 'items.product', 'coupon', 'payments')->findOrFail($id);
+
+    $user = Auth::user();
+    $isAdmin = $user->hasAnyRole(['admin', 'director', 'employee']);
+
+    if (!$isAdmin && $order->user_id !== $user->id) {
+        abort(403, 'غير مصرح لك بمشاهدة هذا الطلب');
+    }
+
+    return response()->json(['order' => $order]);
+}
+
+    /**
+     * حذف طلب (Soft Delete) لصاحب الصلاحية فقط.
+     */
+    public function destroy(Request $request, $id)
     {
-        $order = Order::with('user', 'items.product', 'coupon')->findOrFail($id);
-        return response()->json(['order' => $order]);
+        if (!$request->user() || !$request->user()->can('delete-financial-records')) {
+            abort(403, 'غير مصرح لك بحذف الطلبات');
+        }
+
+        $order = Order::findOrFail($id);
+
+        $order->delete();
+
+        return response()->json([
+            'message' => 'تم حذف الطلب (يمكن استرجاعه)',
+        ]);
     }
 }

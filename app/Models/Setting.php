@@ -9,6 +9,8 @@ class Setting extends Model
    protected $fillable = [
     'free_shipping_limit',
     'vat', 
+         'instapay_id',
+    'vodafone_cash_number',
 ];
 
 }

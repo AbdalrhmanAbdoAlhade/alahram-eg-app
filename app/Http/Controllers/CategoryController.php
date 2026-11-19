@@ -56,8 +56,8 @@ public function show($id)
         $this->checkAdmin();
 
         $validator = Validator::make($request->all(), [
-            'img' => 'nullable|image|max:2048',
-            'banner' => 'nullable|image|max:2048',
+            'img' => 'nullable|image|max:20048',
+            'banner' => 'nullable|image|max:20048',
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
             'banner_status' => 'nullable|boolean',
@@ -110,8 +110,8 @@ Cache::forget("category_{$category->id}");
         $category = Category::findOrFail($id);
 
         $validator = Validator::make($request->all(), [
-            'img' => 'nullable|image|max:2048',
-            'banner' => 'nullable|image|max:2048',
+            'img' => 'nullable|image|max:20048',
+            'banner' => 'nullable|image|max:20048',
             'name' => 'sometimes|string|max:255',
             'description' => 'nullable|string',
             'banner_status' => 'nullable|boolean',
