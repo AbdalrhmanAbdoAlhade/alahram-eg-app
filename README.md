@@ -1,9 +1,9 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0f2027,50:203a43,100:2c5364&height=200&section=header&text=Store%20API&fontSize=52&fontColor=ffffff&fontAlignY=38&desc=E-Commerce%20%C2%B7%20Roles%20%26%20Permissions%20%C2%B7%20Contact%20Inbox&descSize=20&descAlignY=58&animation=fadeIn" width="100%" alt="header" />
+<img src="https://capsule-render.vercel.app/api?type=waving&amp;color=0:0f2027,50:203a43,100:2c5364&amp;height=200&amp;section=header&amp;text=Store%20API&amp;fontSize=52&amp;fontColor=ffffff&amp;fontAlignY=38&amp;desc=E-Commerce%20%C2%B7%20Roles%20and%20Permissions%20%C2%B7%20Contact%20Inbox&amp;descSize=20&amp;descAlignY=58&amp;animation=fadeIn" width="100%" alt="header" />
 
 <a href="https://git.io/typing-svg">
-<img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=20&duration=3000&pause=900&color=38BDF8&center=true&vCenter=true&width=720&lines=Laravel+REST+API+%C2%B7+E-Commerce+Backend;Products+%C2%B7+Orders+%C2%B7+Manual+Payment+Review;Granular+Permissions+%C2%B7+Roles+%C2%B7+Sanctum+Auth;Contact+Inbox+%C2%B7+Read%2FUnread+%C2%B7+WhatsApp+Messaging" alt="Typing SVG" />
+<img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&amp;weight=600&amp;size=20&amp;duration=3000&amp;pause=900&amp;color=38BDF8&amp;center=true&amp;vCenter=true&amp;width=720&amp;lines=Laravel+REST+API+%C2%B7+E-Commerce+Backend;Products+%C2%B7+Orders+%C2%B7+Manual+Payment+Review;Granular+Permissions+%C2%B7+Roles+%C2%B7+Sanctum+Auth;Contact+Inbox+%C2%B7+Read%2FUnread+%C2%B7+WhatsApp+Messaging" alt="Typing SVG" />
 </a>
 
 <br/>
