@@ -13,7 +13,14 @@ return [
     | a conventional file to locate the various service credentials.
     |
     */
-
+'whatsapp' => [
+    'send_url' => env('WHATSAPP_SEND_URL'),
+    'bulk_daily_limit' => (int) env('WHATSAPP_BULK_DAILY_LIMIT', 200),
+    'bulk_min_gap' => (int) env('WHATSAPP_BULK_MIN_GAP', 5),
+    'bulk_max_gap' => (int) env('WHATSAPP_BULK_MAX_GAP', 10),
+    'quiet_start' => (int) env('WHATSAPP_QUIET_START', 23),
+    'quiet_end' => (int) env('WHATSAPP_QUIET_END', 9),
+],
     'postmark' => [
         'token' => env('POSTMARK_TOKEN'),
     ],
