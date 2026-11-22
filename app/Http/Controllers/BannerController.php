@@ -36,6 +36,17 @@ class BannerController extends Controller
         }
     }
 
+  public function videos()
+{
+    $banners = Cache::remember('banners_videos', 600, function () {
+        return Banner::videos()
+            ->with(['category', 'product'])
+            ->orderByDesc('id')
+            ->get();
+    });
+
+    return response()->json($banners);
+}
     protected function moveToPublic($file, string $folder): string
     {
         $filename = uniqid() . '.' . $file->getClientOriginalExtension();

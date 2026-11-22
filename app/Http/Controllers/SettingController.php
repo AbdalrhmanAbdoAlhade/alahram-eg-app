@@ -11,9 +11,10 @@ class SettingController extends Controller
     public function index()
     {
         $setting = Setting::first();
+
         return response()->json([
             'status' => true,
-            'data' => $setting
+            'data'   => $setting,
         ]);
     }
 
@@ -21,42 +22,36 @@ class SettingController extends Controller
     private function isAdmin()
     {
         $user = auth('sanctum')->user();
+
         return $user && in_array($user->role, ['admin', 'director', 'employee']);
     }
 
-    // ✅ تحديث أو إنشاء الإعدادات (الحد الأدنى للشحن المجاني + نسبة الضريبة)
-    public function update(Request $request)
-    {
-        if (!$this->isAdmin()) {
-            return response()->json([
-                'status' => false,
-                'message' => 'غير مصرح لك بتعديل الإعدادات (للمشرفين فقط)',
-            ], 403);
-        }
+    // ✅ تحديث أو إنشاء الإعدادات
+   public function update(Request $request)
+{
+    $validated = $request->validate([
+        'free_shipping_limit'  => 'nullable|numeric|min:0',
+        'vat'                  => 'nullable|numeric|min:0|max:100',
+        'instapay_id'          => 'nullable|string|max:255',
+        'vodafone_cash_number' => 'nullable|string|max:20',
+    ]);
 
-        $request->validate([
-            'free_shipping_limit' => 'nullable|numeric|min:0',
-            'vat' => 'nullable|numeric|min:0|max:100', // ✅ التحقق من الضريبة بين 0 و 100
-        ]);
+    $data = collect($validated)
+        ->filter(fn ($value, $key) => $request->has($key))
+        ->all();
 
-        $setting = Setting::first();
+    $setting = Setting::first();
 
-        if ($setting) {
-            $setting->update([
-                'free_shipping_limit' => $request->free_shipping_limit,
-                'vat' => $request->vat, // ✅ إضافة الضريبة
-            ]);
-        } else {
-            $setting = Setting::create([
-                'free_shipping_limit' => $request->free_shipping_limit,
-                'vat' => $request->vat, // ✅ إنشاء الضريبة
-            ]);
-        }
-
-        return response()->json([
-            'status' => true,
-            'message' => 'تم تحديث الإعدادات بنجاح',
-            'data' => $setting
-        ]);
+    if ($setting) {
+        $setting->update($data);
+    } else {
+        $setting = Setting::create($data);
     }
+
+    return response()->json([
+        'status'  => true,
+        'message' => 'تم تحديث الإعدادات بنجاح',
+        'data'    => $setting->fresh(),
+    ]);
+}
 }

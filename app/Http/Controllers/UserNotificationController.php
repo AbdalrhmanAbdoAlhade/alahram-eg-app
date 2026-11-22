@@ -146,21 +146,14 @@ class UserNotificationController extends Controller
         return response()->json(['unread' => $count]);
     }
     
-    // GET /api/admin/notifications
+  // GET /api/admin/notifications  (محمي بـ permission:notifications.view من الروت)
 public function adminIndex(Request $request)
 {
-    $user = $request->user();
-
-    // تأكد أنه أدمن
-    if ($user->role !== 'admin') {
-        return response()->json(['message' => 'غير مصرح لك بالدخول.'], 403);
-    }
-
-    // جلب كل الإشعارات بترتيب زمني تنازلي
     $perPage = intval($request->get('per_page', 15));
-    $notifications = \App\Models\UserNotification::orderBy('created_at', 'desc')->paginate($perPage);
+
+    $notifications = UserNotification::orderBy('created_at', 'desc')
+        ->paginate($perPage);
 
     return response()->json($notifications);
 }
-
 }
