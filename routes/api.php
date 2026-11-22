@@ -28,11 +28,15 @@ use App\Http\Controllers\ProductTypeController;
 use App\Http\Controllers\DeliveryAreaController;
 use App\Http\Controllers\PermissionController;
 use App\Http\Controllers\RoleController;
+use App\Http\Controllers\DatabaseMaintenanceController;
+
+
 
 // =====================================================
 // 1) Public Routes (بدون تسجيل دخول)
 // =====================================================
 
+Route::get('/banners/videos', [BannerController::class, 'videos']);
 Route::get('product-types/by-category/{categoryId}', [ProductTypeController::class, 'byCategory']);
 Route::get('delivery-areas', [DeliveryAreaController::class, 'index']);
 Route::get('delivery-areas/{id}', [DeliveryAreaController::class, 'show']);
@@ -54,7 +58,7 @@ Route::get('/offer-banners/all-products', [OfferBannerController::class, 'getOff
 // =====================================================
 
 Route::post('register', [AuthController::class, 'register'])->middleware('throttle:10,1');
-Route::post('login', [AuthController::class, 'login'])->middleware('throttle:10,1');
+Route::post('login', [AuthController::class, 'login'])->middleware('throttle:30,1');
 Route::post('verify-otp', [AuthController::class, 'verifyOtp'])->middleware('throttle:5,1');
 
 // =====================================================
@@ -441,6 +445,16 @@ Route::middleware(['auth:sanctum', 'permission:product-reviews.delete'])->group(
 // =====================================================
 // 24) Iframes - تحديث (Permission)
 // =====================================================
+
+Route::prefix('admin/database')
+    ->middleware(['auth:sanctum', 'throttle:5,1'])
+    ->group(function () {
+        Route::get('/backups', [DatabaseMaintenanceController::class, 'index']);
+        Route::post('/backup', [DatabaseMaintenanceController::class, 'backup']);
+        Route::get('/download/{file}', [DatabaseMaintenanceController::class, 'download']);
+        Route::post('/wipe', [DatabaseMaintenanceController::class, 'wipe']);
+        Route::post('/restore', [DatabaseMaintenanceController::class, 'restore']);
+    });
 
 Route::middleware(['auth:sanctum', 'permission:iframes.update'])->group(function () {
     Route::post('/iframes', [IframeController::class, 'update']);
